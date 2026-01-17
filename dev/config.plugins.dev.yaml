@@ -1,0 +1,23 @@
+listen: ':5520'
+
+tls:
+  alpn:
+    - hytale/1
+
+routing:
+  default:
+    host: play.hyvane.com
+    port: 5520
+
+plugins:
+  - name: deny-grpc
+    type: grpc
+    stage: deny
+    grpc:
+      address: 127.0.0.1:7777
+
+  - name: mutate-wasm
+    type: wasm
+    stage: mutate
+    wasm:
+      path: examples/wasm-plugin/plugin.wasm

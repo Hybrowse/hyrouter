@@ -1,0 +1,13 @@
+listen: ":5520"
+
+tls:
+  alpn:
+    - hytale/1
+
+quic:
+  max_idle_timeout: 30s
+
+routing:
+  default:
+    host: play.hyvane.com
+    port: 5520
