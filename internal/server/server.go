@@ -1,0 +1,196 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/hybrowse/hyrouter/internal/config"
+	"github.com/hybrowse/hyrouter/internal/discovery"
+	"github.com/hybrowse/hyrouter/internal/plugins"
+	"github.com/hybrowse/hyrouter/internal/referral"
+	"github.com/hybrowse/hyrouter/internal/routing"
+	"github.com/quic-go/quic-go"
+)
+
+type Server struct {
+	cfg        *config.Config
+	logger     *slog.Logger
+	router     routing.Engine
+	discovery  *discovery.Manager
+	initErr    error
+	pluginCfgs []config.PluginConfig
+	plugins    *plugins.Manager
+
+	referralKeyID  uint8
+	referralSecret []byte
+}
+
+func New(cfg *config.Config, logger *slog.Logger) *Server {
+	var r routing.Engine
+	var se *routing.StaticEngine
+	var pcfgs []config.PluginConfig
+	var dm *discovery.Manager
+	var initErr error
+	var refKeyID uint8
+	var refSecret []byte
+	if cfg != nil {
+		se = routing.NewStaticEngine(cfg.Routing)
+		r = se
+		pcfgs = cfg.Plugins
+		if cfg.Discovery != nil {
+			m, err := discovery.New(cfg.Discovery, logger)
+			if err != nil {
+				initErr = err
+			} else {
+				dm = m
+				if se != nil {
+					se.SetDiscovery(func(ctx context.Context, provider string) ([]routing.Backend, error) {
+						bs, ok, err := dm.Resolve(ctx, provider)
+						if err != nil {
+							return nil, err
+						}
+						if !ok {
+							return nil, fmt.Errorf("unknown discovery provider %q", provider)
+						}
+						return bs, nil
+					})
+				}
+			}
+		}
+		if cfg.Referral != nil {
+			refKeyID = cfg.Referral.KeyID
+			if strings.TrimSpace(cfg.Referral.HMACSecret) != "" {
+				b, err := referral.DecodeSecret(cfg.Referral.HMACSecret)
+				if err != nil {
+					if initErr == nil {
+						initErr = fmt.Errorf("invalid referral.hmac_secret: %w", err)
+					}
+				} else {
+					refSecret = b
+				}
+			}
+		}
+	}
+	return &Server{cfg: cfg, logger: logger, router: r, pluginCfgs: pcfgs, discovery: dm, initErr: initErr, referralKeyID: refKeyID, referralSecret: refSecret}
+}
+
+func (s *Server) initPlugins(ctx context.Context) error {
+	if s.plugins != nil {
+		return nil
+	}
+	if len(s.pluginCfgs) == 0 {
+		return nil
+	}
+	ordered, err := plugins.OrderPluginConfigs(s.pluginCfgs)
+	if err != nil {
+		return err
+	}
+	pls, err := plugins.LoadAll(ctx, ordered, s.logger)
+	if err != nil {
+		return err
+	}
+	s.plugins = plugins.NewManager(s.logger, pls)
+	return nil
+}
+
+func (s *Server) Run(ctx context.Context) error {
+	if s.initErr != nil {
+		return s.initErr
+	}
+	tlsConfig, err := s.buildTLSConfig()
+	if err != nil {
+		return err
+	}
+	if s.discovery != nil {
+		if err := s.discovery.Start(ctx); err != nil {
+			return err
+		}
+	}
+	if err := s.initPlugins(ctx); err != nil {
+		return err
+	}
+	if s.plugins != nil {
+		defer s.plugins.Close(ctx)
+	}
+
+	maxIdleTimeout := 30 * time.Second
+	if s.cfg.QUIC.MaxIdleTimeout != "" {
+		d, err := time.ParseDuration(s.cfg.QUIC.MaxIdleTimeout)
+		if err != nil {
+			return err
+		}
+		maxIdleTimeout = d
+	}
+
+	quicConfig := &quic.Config{
+		MaxIdleTimeout: maxIdleTimeout,
+	}
+
+	listener, err := quic.ListenAddr(s.cfg.Listen, tlsConfig, quicConfig)
+	if err != nil {
+		return err
+	}
+	defer listener.Close() // nolint:errcheck
+
+	s.logger.Info("listening", "addr", s.cfg.Listen)
+
+	for {
+		conn, err := listener.Accept(ctx)
+		if err != nil {
+			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				listener.Close() // nolint:errcheck
+				return nil
+			}
+			return err
+		}
+
+		go s.handleConn(ctx, conn)
+	}
+}
+
+func (s *Server) handleConn(ctx context.Context, conn *quic.Conn) {
+	state := conn.ConnectionState()
+
+	attrs := []any{
+		"sni", state.TLS.ServerName,
+		"alpn", state.TLS.NegotiatedProtocol,
+	}
+	if s != nil && s.cfg != nil && s.cfg.Logging.LogClientIP {
+		attrs = append(attrs, "remote_addr", conn.RemoteAddr().String())
+	}
+	logger := s.logger.With(attrs...)
+
+	decision := routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}
+	routeErr := error(nil)
+
+	fp := ""
+	if len(state.TLS.PeerCertificates) > 0 {
+		fp = certificateFingerprint(state.TLS.PeerCertificates[0])
+	}
+	baseEvent := plugins.ConnectEvent{SNI: state.TLS.ServerName, ClientCertFingerprint: fp}
+
+	logger.Info(
+		"accepted connection",
+		"client_cert_present", fp != "",
+	)
+	if fp != "" {
+		logger.Debug("client certificate", "client_cert_fingerprint", fp)
+	}
+
+	connCtx := conn.Context()
+	anyStreamAccepted := &atomic.Bool{}
+	go s.acceptBidiStreams(connCtx, conn, logger, decision, routeErr, baseEvent, anyStreamAccepted)
+	go s.acceptUniStreams(connCtx, conn, logger, decision, routeErr, baseEvent, anyStreamAccepted)
+
+	select {
+	case <-ctx.Done():
+		_ = conn.CloseWithError(0, "shutdown")
+	case <-connCtx.Done():
+		logger.Debug("connection closed", "error", connCtx.Err(), "any_stream_accepted", anyStreamAccepted.Load())
+	}
+}

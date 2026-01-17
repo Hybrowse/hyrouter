@@ -1,0 +1,86 @@
+version: "3"
+
+tasks:
+  fmt:
+    cmds:
+      - go fmt ./...
+
+  vet:
+    cmds:
+      - go vet ./...
+
+  lint:
+    cmds:
+      - golangci-lint run
+
+  tidy:
+    cmds:
+      - go mod tidy
+
+  test:
+    vars:
+      PKGS:
+        sh: go list ./... | grep -v '/examples' | paste -sd' ' -
+    cmds:
+      - go test {{.PKGS}}
+
+  cover:
+    vars:
+      PKGS:
+        sh: go list ./... | grep -v '/examples' | paste -sd' ' -
+      COVERPKG:
+        sh: go list ./... | grep -v '/examples' | paste -sd, -
+    cmds:
+      - go test -count=1 {{.PKGS}} -coverpkg={{.COVERPKG}} -coverprofile=coverage.out -covermode=atomic
+      - go tool cover -func=coverage.out | tail -n 1
+
+  race:
+    vars:
+      PKGS:
+        sh: go list ./... | grep -v '/examples' | paste -sd' ' -
+    cmds:
+      - go test -race {{.PKGS}}
+
+  ci:
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: cover
+
+  build:
+    cmds:
+      - mkdir -p bin
+      - go build -o bin/hyrouter ./cmd/hyrouter
+
+  run:
+    cmds:
+      - go run ./cmd/hyrouter -config dev/config.dev.yaml
+
+  run:debug:
+    cmds:
+      - go run ./cmd/hyrouter -config dev/config.dev.yaml -log-level debug
+
+  plugin:grpc:run:
+    cmds:
+      - go run -tags=examples ./examples/grpc-plugin -listen 127.0.0.1:7777
+
+  plugin:wasm:build:
+    cmds:
+      - GOOS=wasip1 GOARCH=wasm go build -tags=examples -buildmode=c-shared -o examples/wasm-plugin/plugin.wasm ./examples/wasm-plugin
+
+  run:plugins:
+    cmds:
+      - go run ./cmd/hyrouter -config dev/config.plugins.dev.yaml
+
+  run:plugins:debug:
+    cmds:
+      - go run ./cmd/hyrouter -config dev/config.plugins.dev.yaml -log-level debug
+
+  docker:build:
+    cmds:
+      - docker build -t hyrouter:local .
+
+  docker:run:
+    cmds:
+      - docker run --rm -p 5520:5520/udp -v $(pwd)/config.yaml:/app/config.yaml hyrouter:local

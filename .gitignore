@@ -1,0 +1,10 @@
+local/
+
+.DS_Store
+
+coverage.out
+
+.windsurf/
+.claude/
+
+bin/

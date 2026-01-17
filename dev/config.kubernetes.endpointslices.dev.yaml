@@ -1,0 +1,88 @@
+listen: ":5520"
+
+tls:
+  alpn:
+    - hytale/*
+
+quic:
+  max_idle_timeout: 30s
+
+logging:
+  log_client_ip: true
+
+messages:
+  disconnect:
+    no_route: "The server is currently unavailable."
+    no_backends: "The server is full or restarting. Please try again in a moment."
+    routing_error: "The server is currently unreachable. Please try again later."
+    discovery_error: "The server is looking for an available instance. Please try again in a moment."
+  disconnect_locales:
+    de:
+      no_route: "Der Server ist aktuell nicht verfügbar."
+      no_backends: "Der Server ist gerade voll oder startet neu. Bitte versuche es gleich erneut."
+      routing_error: "Der Server ist aktuell nicht erreichbar. Bitte versuche es später erneut."
+      discovery_error: "Der Server sucht gerade eine freie Instanz. Bitte versuche es gleich erneut."
+    fr:
+      no_route: "Le serveur est actuellement indisponible."
+      no_backends: "Le serveur est plein ou redémarre. Réessaie dans un instant."
+      routing_error: "Le serveur est actuellement inaccessible. Réessaie plus tard."
+      discovery_error: "Le serveur cherche une instance disponible. Réessaie dans un instant."
+    es:
+      no_route: "El servidor no está disponible en este momento."
+      no_backends: "El servidor está lleno o reiniciándose. Inténtalo de nuevo en un momento."
+      routing_error: "No se puede acceder al servidor en este momento. Inténtalo más tarde."
+      discovery_error: "El servidor está buscando una instancia disponible. Inténtalo de nuevo en un momento."
+    pt:
+      no_route: "O servidor não está disponível no momento."
+      no_backends: "O servidor está cheio ou reiniciando. Tente novamente em instantes."
+      routing_error: "Não foi possível acessar o servidor no momento. Tente novamente mais tarde."
+      discovery_error: "O servidor está procurando uma instância disponível. Tente novamente em instantes."
+    pt-BR:
+      no_route: "O servidor está indisponível no momento."
+      no_backends: "O servidor está cheio ou reiniciando. Tente novamente em instantes."
+      routing_error: "O servidor está inacessível no momento. Tente novamente mais tarde."
+      discovery_error: "O servidor está procurando uma instância disponível. Tente novamente em instantes."
+    it:
+      no_route: "Il server non è disponibile al momento."
+      no_backends: "Il server è pieno o si sta riavviando. Riprova tra un momento."
+      routing_error: "Il server non è raggiungibile al momento. Riprova più tardi."
+      discovery_error: "Il server sta cercando un'istanza disponibile. Riprova tra un momento."
+
+discovery:
+  providers:
+    - name: k8s
+      type: kubernetes
+      kubernetes:
+        kubeconfig: ""
+        namespaces:
+          - default
+        resources:
+          - kind: endpointslices
+            service:
+              name: hytale-backend
+              namespace: default
+            selector:
+              labels: "hyrouter/enabled=true"
+              annotations: ""
+            port:
+              name: game
+        filters:
+          require_endpoint_ready: true
+        metadata:
+          include_labels: []
+          include_annotations:
+            - hyrouter/weight
+
+routing:
+  routes:
+    - match:
+        hostname: "play.example.com"
+      pool:
+        strategy: round_robin
+        limit: 20
+        backends:
+          - host: play.hyvane.com
+            port: 5520
+        discovery:
+          provider: k8s
+          mode: prefer
