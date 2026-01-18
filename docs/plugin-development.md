@@ -24,14 +24,19 @@ The JSON types are defined in `internal/plugins/types.go`.
   - `username` (optional)
   - `language` (optional)
   - `identity_token_present` (optional)
-- `target` – current routing decision (`host`, `port`)
+- `strategy` – selected strategy (`round_robin|random|weighted`)
+- `candidates` – candidate backends for the current route/pool
+- `selected_index` – index chosen by Hyrouter
+- `backend` – the selected backend (`host`, `port`, `weight`, `meta`)
 - `referral_data` – current referral payload (optional)
 
 ### ConnectResponse
 
 - `deny` (bool)
 - `deny_reason` (string, optional)
-- `target` (object, optional)
+- `candidates` (list, optional)
+- `selected_index` (int, optional)
+- `backend` (object, optional)
 - `referral_data` (bytes, optional)
 
 ## gRPC plugins

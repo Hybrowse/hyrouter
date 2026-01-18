@@ -13,7 +13,7 @@ import (
 func TestLoadYAML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte("listen: ':5520'\ntls:\n  alpn:\n    - hytale/1\nrouting:\n  default:\n    host: play.hyvane.com\n    port: 5520\n"), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte("listen: ':5520'\ntls:\n  alpn:\n    - hytale/1\nrouting:\n  default:\n    strategy: round_robin\n    backends:\n      - host: play.hyvane.com\n        port: 5520\n"), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -27,7 +27,7 @@ func TestLoadYAML(t *testing.T) {
 	if len(cfg.TLS.ALPN) != 1 || cfg.TLS.ALPN[0] != "hytale/1" {
 		t.Fatalf("unexpected alpn: %#v", cfg.TLS.ALPN)
 	}
-	if cfg.Routing.Default == nil || cfg.Routing.Default.Host != "play.hyvane.com" {
+	if cfg.Routing.Default == nil || len(cfg.Routing.Default.Backends) != 1 || cfg.Routing.Default.Backends[0].Host != "play.hyvane.com" {
 		t.Fatalf("unexpected routing: %#v", cfg.Routing)
 	}
 }
@@ -35,7 +35,7 @@ func TestLoadYAML(t *testing.T) {
 func TestLoadJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.json")
-	if err := os.WriteFile(path, []byte(`{"listen":":5520","tls":{"alpn":["hytale/1"]},"routing":{"default":{"host":"play.hyvane.com","port":5520}}}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"listen":":5520","tls":{"alpn":["hytale/1"]},"routing":{"default":{"strategy":"round_robin","backends":[{"host":"play.hyvane.com","port":5520}]}}}`), 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
@@ -88,7 +88,7 @@ func TestValidate_Errors(t *testing.T) {
 	}
 
 	cfg = Default()
-	cfg.Routing = routing.Config{Default: &routing.Target{Host: "", Port: 1}}
+	cfg.Routing = routing.Config{Default: &routing.Pool{Strategy: "round_robin", Backends: []routing.Backend{{Host: "", Port: 1}}}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error")
 	}

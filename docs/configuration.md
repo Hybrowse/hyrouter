@@ -71,12 +71,16 @@ Static routing rules based on the TLS SNI (hostname) observed during the QUIC ha
 
 Fields:
 
-- `default`: fallback target (optional)
-  - `host` (string)
-  - `port` (int)
+- `default`: fallback pool (optional)
+  - `strategy` (string): `round_robin|random|weighted`
+  - `backends` (list)
+    - `host` (string)
+    - `port` (int)
+    - `weight` (int, only for `weighted`)
 - `routes`: ordered list of routing rules (optional)
   - `match.hostname` (string) or `match.hostnames` (list of string)
-  - `target.host` / `target.port`
+  - `pool.strategy`
+  - `pool.backends` (same schema as `default.backends`)
 
 Routing notes:
 
@@ -88,19 +92,29 @@ Example:
 ```yaml
 routing:
   default:
-    host: play.hyvane.com
-    port: 5520
+    strategy: round_robin
+    backends:
+      - host: play.hyvane.com
+        port: 5520
   routes:
     - match:
         hostname: "alpha.example.com"
-      target:
-        host: alpha-backend.internal
-        port: 5520
+      pool:
+        strategy: weighted
+        backends:
+          - host: alpha-backend-a.internal
+            port: 5520
+            weight: 1
+          - host: alpha-backend-b.internal
+            port: 5520
+            weight: 3
     - match:
         hostname: "*.example.com"
-      target:
-        host: wildcard-backend.internal
-        port: 5520
+      pool:
+        strategy: random
+        backends:
+          - host: wildcard-backend.internal
+            port: 5520
 ```
 
 See also: [`docs/routing.md`](docs/routing.md).

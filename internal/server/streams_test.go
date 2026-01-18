@@ -46,7 +46,7 @@ func TestDumpFrames_PluginDenySendsDisconnect(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 
 	s := &Server{logger: logger, plugins: plugins.NewManager(logger, []plugins.Plugin{&denyPlugin{}})}
-	decision := routing.Decision{Target: routing.Target{Host: "play.hyvane.com", Port: 5520}}
+	decision := routing.Decision{Backend: routing.Backend{Host: "play.hyvane.com", Port: 5520}}
 	s.dumpFrames(context.Background(), rx, logger, decision, plugins.ConnectEvent{})
 
 	out := rx.w.Bytes()
@@ -98,7 +98,7 @@ func TestDumpFrames_PluginMutatesReferralData(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 
 	s := &Server{logger: logger, plugins: plugins.NewManager(logger, []plugins.Plugin{&mutatePlugin{}})}
-	decision := routing.Decision{Target: routing.Target{Host: "play.hyvane.com", Port: 5520}}
+	decision := routing.Decision{Backend: routing.Backend{Host: "play.hyvane.com", Port: 5520}}
 	s.dumpFrames(context.Background(), rx, logger, decision, plugins.ConnectEvent{})
 
 	out := rx.w.Bytes()
@@ -179,7 +179,7 @@ func TestDumpFrames_SendsReferralOnConnect(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 
 	s := &Server{logger: logger}
-	decision := routing.Decision{Target: routing.Target{Host: "play.hyvane.com", Port: 5520}, Matched: false, RouteIndex: -1}
+	decision := routing.Decision{Backend: routing.Backend{Host: "play.hyvane.com", Port: 5520}, Matched: false, RouteIndex: -1}
 	s.dumpFrames(context.Background(), rx, logger, decision, plugins.ConnectEvent{})
 
 	out := rx.w.Bytes()

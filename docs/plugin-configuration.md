@@ -5,7 +5,7 @@ Hyrouter supports plugins that can influence connection handling after the clien
 Plugins can:
 
 - Deny a connection (Hyrouter replies with `Disconnect`, packet ID `1`).
-- Override the selected routing target.
+- Override the selected routing backend.
 - Attach referral data (forwarded into `ClientReferral`, packet ID `18`).
 
 Plugins are configured under the top-level `plugins` list in the Hyrouter config file.
@@ -74,7 +74,10 @@ If any plugin returns `deny: true`, Hyrouter:
 
 ### Target override
 
-A plugin may set `target` in its response. Hyrouter will use the latest non-nil `target` returned by plugins.
+A plugin may influence backend selection by setting one of:
+
+- `backend` (explicit host/port)
+- `selected_index` (pick an entry from the current `candidates` list)
 
 ### Referral data
 

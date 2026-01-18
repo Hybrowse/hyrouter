@@ -27,7 +27,7 @@ func (s *server) OnConnect(ctx context.Context, req *plugins.ConnectRequest) (*p
 	}
 
 	if strings.Contains(strings.ToLower(req.Event.SNI), "grpc") {
-		resp.Target = &routing.Target{Host: "play.hyvane.com", Port: 5520}
+		resp.Backend = &routing.Backend{Host: "play.hyvane.com", Port: 5520}
 	}
 
 	resp.ReferralData = []byte("grpc-plugin")

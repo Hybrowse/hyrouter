@@ -85,7 +85,7 @@ func TestEndToEndReferralRedirect(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Listen = addr
-	cfg.Routing.Default = &routing.Target{Host: "play.hyvane.com", Port: 5520}
+	cfg.Routing.Default = &routing.Pool{Strategy: "round_robin", Backends: []routing.Backend{{Host: "play.hyvane.com", Port: 5520}}}
 
 	h := newCaptureHandler()
 	logger := slog.New(h)

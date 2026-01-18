@@ -16,24 +16,40 @@ type Manager struct {
 }
 
 type ApplyResult struct {
-	Denied       bool
-	DenyReason   string
-	Target       routing.Target
-	ReferralData []byte
+	Denied        bool
+	DenyReason    string
+	Strategy      string
+	Candidates    []routing.Backend
+	SelectedIndex int
+	Backend       routing.Backend
+	ReferralData  []byte
 }
 
 func NewManager(logger *slog.Logger, plugins []Plugin) *Manager {
 	return &Manager{plugins: plugins, logger: logger}
 }
 
-func (m *Manager) ApplyOnConnect(ctx context.Context, ev ConnectEvent, target routing.Target, referralData []byte) ApplyResult {
-	res := ApplyResult{Target: target, ReferralData: referralData}
+func (m *Manager) ApplyOnConnect(ctx context.Context, ev ConnectEvent, decision routing.Decision, referralData []byte) ApplyResult {
+	res := ApplyResult{
+		Strategy:      decision.Strategy,
+		Candidates:    decision.Candidates,
+		SelectedIndex: decision.SelectedIndex,
+		Backend:       decision.Backend,
+		ReferralData:  referralData,
+	}
 	if m == nil {
 		return res
 	}
 	for _, p := range m.plugins {
 		pctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
-		pr, err := p.OnConnect(pctx, ConnectRequest{Event: ev, Target: res.Target, ReferralData: res.ReferralData})
+		pr, err := p.OnConnect(pctx, ConnectRequest{
+			Event:         ev,
+			Strategy:      res.Strategy,
+			Candidates:    res.Candidates,
+			SelectedIndex: res.SelectedIndex,
+			Backend:       res.Backend,
+			ReferralData:  res.ReferralData,
+		})
 		cancel()
 		if err != nil {
 			if m.logger != nil {
@@ -46,8 +62,32 @@ func (m *Manager) ApplyOnConnect(ctx context.Context, ev ConnectEvent, target ro
 			res.DenyReason = pr.DenyReason
 			return res
 		}
-		if pr.Target != nil {
-			res.Target = *pr.Target
+		if pr.Candidates != nil {
+			if len(pr.Candidates) > 0 {
+				res.Candidates = pr.Candidates
+			}
+		}
+		if pr.SelectedIndex != nil {
+			idx := *pr.SelectedIndex
+			if idx >= 0 && idx < len(res.Candidates) {
+				res.SelectedIndex = idx
+				res.Backend = res.Candidates[idx]
+			}
+		}
+		if pr.Backend != nil {
+			res.Backend = *pr.Backend
+			if len(res.Candidates) > 0 {
+				for i, b := range res.Candidates {
+					if b.Host == res.Backend.Host && b.Port == res.Backend.Port {
+						res.SelectedIndex = i
+						break
+					}
+				}
+			}
+		}
+		if res.Backend.Host == "" && len(res.Candidates) > 0 {
+			res.SelectedIndex = 0
+			res.Backend = res.Candidates[0]
 		}
 		if pr.ReferralData != nil {
 			res.ReferralData = pr.ReferralData

@@ -13,7 +13,7 @@ import (
 func TestRunLoadsConfigAndInvokesServer(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	b := []byte("listen: ':5520'\ntls:\n  alpn:\n    - hytale/1\nrouting:\n  default:\n    host: play.hyvane.com\n    port: 5520\n")
+	b := []byte("listen: ':5520'\ntls:\n  alpn:\n    - hytale/1\nrouting:\n  default:\n    strategy: round_robin\n    backends:\n      - host: play.hyvane.com\n        port: 5520\n")
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -64,7 +64,7 @@ func TestMainMain_ReturnCodes(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	b := []byte("listen: ':5520'\ntls:\n  alpn:\n    - hytale/1\nrouting:\n  default:\n    host: play.hyvane.com\n    port: 5520\n")
+	b := []byte("listen: ':5520'\ntls:\n  alpn:\n    - hytale/1\nrouting:\n  default:\n    strategy: round_robin\n    backends:\n      - host: play.hyvane.com\n        port: 5520\n")
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -97,7 +97,7 @@ func TestMain_CallsExit(t *testing.T) {
 
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.yaml")
-	b := []byte("listen: ':5520'\ntls:\n  alpn:\n    - hytale/1\nrouting:\n  default:\n    host: play.hyvane.com\n    port: 5520\n")
+	b := []byte("listen: ':5520'\ntls:\n  alpn:\n    - hytale/1\nrouting:\n  default:\n    strategy: round_robin\n    backends:\n      - host: play.hyvane.com\n        port: 5520\n")
 	if err := os.WriteFile(path, b, 0o600); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

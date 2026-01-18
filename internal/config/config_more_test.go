@@ -15,12 +15,12 @@ func TestValidateRouting(t *testing.T) {
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
 	}
-	cfg.Routing.Default = &routing.Target{Host: "", Port: 1}
+	cfg.Routing.Default = &routing.Pool{Strategy: "round_robin", Backends: []routing.Backend{{Host: "", Port: 1}}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error")
 	}
 
-	cfg.Routing.Default = &routing.Target{Host: "example", Port: 0}
+	cfg.Routing.Default = &routing.Pool{Strategy: "round_robin", Backends: []routing.Backend{{Host: "example", Port: 0}}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error")
 	}

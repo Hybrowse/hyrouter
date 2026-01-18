@@ -61,7 +61,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 	var pending []byte
 	referralSent := false
 	referralData := []byte(nil)
-	target := decision.Target
+	backend := decision.Backend
 
 	for {
 		n, err := r.Read(buf)
@@ -114,7 +114,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 						ev.Language = info.language
 						ev.IdentityTokenPresent = info.identityTokenPresent
 						if s.plugins != nil {
-							res := s.plugins.ApplyOnConnect(ctx, ev, target, referralData)
+							res := s.plugins.ApplyOnConnect(ctx, ev, decision, referralData)
 							if res.Denied {
 								// Deny is terminal: send Disconnect and close the stream so the client can progress.
 								w, ok := r.(io.Writer)
@@ -139,7 +139,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 								}
 								return
 							}
-							target = res.Target
+							backend = res.Backend
 							referralData = res.ReferralData
 						}
 						logger.Info(
@@ -154,12 +154,12 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 							"referral_source", info.referralSource,
 						)
 
-						if !referralSent && target.Host != "" {
+						if !referralSent && backend.Host != "" {
 							w, ok := r.(io.Writer)
 							if ok {
 								refPayload, err := encodeClientReferralPayload(
-									target.Host,
-									uint16(target.Port),
+									backend.Host,
+									uint16(backend.Port),
 									referralData,
 								)
 								if err != nil {
@@ -170,8 +170,8 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 									referralSent = true
 									logger.Info(
 										"tx referral",
-										"host", target.Host,
-										"port", target.Port,
+										"host", backend.Host,
+										"port", backend.Port,
 										"matched", decision.Matched,
 										"route_index", decision.RouteIndex,
 										"data_len", len(referralData),

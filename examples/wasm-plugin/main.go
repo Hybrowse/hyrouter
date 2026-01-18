@@ -36,7 +36,7 @@ func OnConnect(ptr uint32, length uint32) uint64 {
 		return (uint64(p) << 32) | uint64(len(out))
 	}
 
-	out := []byte(`{"referral_data":"d2FzbS1wbHVnaW4=","target":{"host":"play.hyvane.com","port":5520}}`)
+	out := []byte(`{"referral_data":"d2FzbS1wbHVnaW4=","backend":{"host":"play.hyvane.com","port":5520}}`)
 	p := Alloc(uint32(len(out)))
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(uintptr(p))), uint32(len(out))), out)
 	return (uint64(p) << 32) | uint64(len(out))

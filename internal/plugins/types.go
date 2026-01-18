@@ -18,16 +18,21 @@ type ConnectEvent struct {
 }
 
 type ConnectRequest struct {
-	Event        ConnectEvent   `json:"event"`
-	Target       routing.Target `json:"target"`
-	ReferralData []byte         `json:"referral_data,omitempty"`
+	Event         ConnectEvent      `json:"event"`
+	Strategy      string            `json:"strategy"`
+	Candidates    []routing.Backend `json:"candidates"`
+	SelectedIndex int               `json:"selected_index"`
+	Backend       routing.Backend   `json:"backend"`
+	ReferralData  []byte            `json:"referral_data,omitempty"`
 }
 
 type ConnectResponse struct {
-	Deny         bool            `json:"deny"`
-	DenyReason   string          `json:"deny_reason,omitempty"`
-	Target       *routing.Target `json:"target,omitempty"`
-	ReferralData []byte          `json:"referral_data,omitempty"`
+	Deny          bool              `json:"deny"`
+	DenyReason    string            `json:"deny_reason,omitempty"`
+	Candidates    []routing.Backend `json:"candidates,omitempty"`
+	SelectedIndex *int              `json:"selected_index,omitempty"`
+	Backend       *routing.Backend  `json:"backend,omitempty"`
+	ReferralData  []byte            `json:"referral_data,omitempty"`
 }
 
 type Plugin interface {

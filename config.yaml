@@ -9,5 +9,7 @@ quic:
 
 routing:
   default:
-    host: play.hyvane.com
-    port: 5520
+    strategy: round_robin
+    backends:
+      - host: play.hyvane.com
+        port: 5520
