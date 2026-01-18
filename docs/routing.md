@@ -37,6 +37,17 @@ Pool strategies:
 - `random`
 - `weighted` (requires `weight > 0` on each backend)
 
+### Discovery-backed pools
+
+A pool can optionally reference a discovery provider instead of (or in addition to) static `backends`.
+
+- `pool.discovery.provider` selects a configured provider (see `docs/configuration.md`).
+- `pool.discovery.mode` controls how discovered backends interact with static backends:
+  - `prefer`: use discovered backends if any exist, otherwise fall back to static backends
+  - `union`: merge static + discovered backends
+- `pool.discovery.sort` sorts candidates before load balancing.
+- `pool.discovery.limit` optionally caps the candidate set before load balancing.
+
 ## Example
 
 ```yaml
@@ -69,6 +80,19 @@ routing:
           - host: wildcard-backend-b.internal
             port: 5520
             weight: 2
+
+    - match:
+        hostname: "play.example.com"
+      pool:
+        strategy: round_robin
+        discovery:
+          provider: agones
+          mode: prefer
+          sort:
+            - key: counter:players.count
+              type: number
+              order: asc
+          limit: 10
 ```
 
 ## Interaction with plugins

@@ -8,53 +8,55 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 
+	"github.com/hybrowse/hyrouter/internal/config"
 	"github.com/hybrowse/hyrouter/internal/plugins"
 	"github.com/hybrowse/hyrouter/internal/routing"
 	"github.com/quic-go/quic-go"
 )
 
-func (s *Server) acceptBidiStreams(ctx context.Context, conn *quic.Conn, logger *slog.Logger, decision routing.Decision, baseEvent plugins.ConnectEvent) {
+func (s *Server) acceptBidiStreams(ctx context.Context, conn *quic.Conn, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
 	for {
 		stream, err := conn.AcceptStream(ctx)
 		if err != nil {
 			logger.Debug("accept bidi stream failed", "error", err)
 			return
 		}
-		go s.handleBidiStream(ctx, stream, logger, decision, baseEvent)
+		go s.handleBidiStream(ctx, stream, logger, decision, routeErr, baseEvent)
 	}
 }
 
-func (s *Server) acceptUniStreams(ctx context.Context, conn *quic.Conn, logger *slog.Logger, decision routing.Decision, baseEvent plugins.ConnectEvent) {
+func (s *Server) acceptUniStreams(ctx context.Context, conn *quic.Conn, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
 	for {
 		stream, err := conn.AcceptUniStream(ctx)
 		if err != nil {
 			logger.Debug("accept uni stream failed", "error", err)
 			return
 		}
-		go s.handleUniStream(ctx, stream, logger, decision, baseEvent)
+		go s.handleUniStream(ctx, stream, logger, decision, routeErr, baseEvent)
 	}
 }
 
-func (s *Server) handleBidiStream(ctx context.Context, stream *quic.Stream, logger *slog.Logger, decision routing.Decision, baseEvent plugins.ConnectEvent) {
+func (s *Server) handleBidiStream(ctx context.Context, stream *quic.Stream, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
 	streamLogger := logger.With(
 		"stream_id", stream.StreamID(),
 		"stream_type", "bidi",
 	)
 	streamLogger.Debug("accepted stream")
-	s.dumpFrames(ctx, stream, streamLogger, decision, baseEvent)
+	s.dumpFrames(ctx, stream, streamLogger, decision, routeErr, baseEvent)
 }
 
-func (s *Server) handleUniStream(ctx context.Context, stream *quic.ReceiveStream, logger *slog.Logger, decision routing.Decision, baseEvent plugins.ConnectEvent) {
+func (s *Server) handleUniStream(ctx context.Context, stream *quic.ReceiveStream, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
 	streamLogger := logger.With(
 		"stream_id", stream.StreamID(),
 		"stream_type", "uni",
 	)
 	streamLogger.Debug("accepted stream")
-	s.dumpFrames(ctx, stream, streamLogger, decision, baseEvent)
+	s.dumpFrames(ctx, stream, streamLogger, decision, routeErr, baseEvent)
 }
 
-func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logger, decision routing.Decision, baseEvent plugins.ConnectEvent) {
+func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
 	// Hytale packet framing: uint32le payloadLen + uint32le packetID + payload.
 	// Hyrouter only needs the first Connect packet to either deny the connection or send a referral.
 	buf := make([]byte, 4096)
@@ -179,6 +181,32 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 								}
 							}
 						}
+						if !referralSent && backend.Host == "" {
+							reason := s.disconnectReason(baseEvent.SNI, ev.Language, routeErr)
+							if reason != "" {
+								w, ok := r.(io.Writer)
+								if !ok {
+									logger.Info("failed to send disconnect", "error", "stream is not writable")
+									return
+								}
+								dp, derr := encodeDisconnectPayload(reason)
+								if derr != nil {
+									logger.Info("failed to build disconnect", "error", derr)
+									return
+								}
+								if err := writeFramedPacket(w, 1, dp); err != nil {
+									logger.Info("failed to send disconnect", "error", err)
+									return
+								}
+								logger.Info("tx disconnect", "reason", reason)
+								if c, ok := r.(interface{ Close() error }); ok {
+									if err := c.Close(); err != nil {
+										logger.Info("failed to close stream after disconnect", "error", err)
+									}
+								}
+								return
+							}
+						}
 					}
 				}
 
@@ -205,4 +233,113 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 			return
 		}
 	}
+}
+
+func (s *Server) disconnectReason(sni string, language string, routeErr error) string {
+	if routeErr == nil {
+		msg := s.templateOrDefault(s.templateNoRoute(language), "no route")
+		return formatTemplate(msg, sni, nil)
+	}
+	if errors.Is(routeErr, routing.ErrNoBackends) {
+		msg := s.templateOrDefault(s.templateNoBackends(language), "no backends")
+		return formatTemplate(msg, sni, routeErr)
+	}
+	if errors.Is(routeErr, routing.ErrDiscovery) || errors.Is(routeErr, routing.ErrDiscoveryNotSet) || errors.Is(routeErr, routing.ErrInvalidDiscoveryMode) {
+		msg := s.templateOrDefault(s.templateDiscoveryError(language), "discovery error")
+		return formatTemplate(msg, sni, routeErr)
+	}
+	msg := s.templateOrDefault(s.templateRoutingError(language), "routing error")
+	return formatTemplate(msg, sni, routeErr)
+}
+
+func (s *Server) templateNoRoute(language string) string {
+	return s.disconnectMessagesForLanguage(language).NoRoute
+}
+
+func (s *Server) templateNoBackends(language string) string {
+	return s.disconnectMessagesForLanguage(language).NoBackends
+}
+
+func (s *Server) templateRoutingError(language string) string {
+	return s.disconnectMessagesForLanguage(language).RoutingError
+}
+
+func (s *Server) templateDiscoveryError(language string) string {
+	return s.disconnectMessagesForLanguage(language).DiscoveryError
+}
+
+func (s *Server) disconnectMessagesForLanguage(language string) config.DisconnectMessagesConfig {
+	if s == nil || s.cfg == nil {
+		return config.DisconnectMessagesConfig{}
+	}
+	base := s.cfg.Messages.Disconnect
+	locales := s.cfg.Messages.DisconnectLocales
+	if len(locales) == 0 {
+		return base
+	}
+
+	lang := strings.TrimSpace(language)
+	if lang == "" {
+		return base
+	}
+	lang = strings.ReplaceAll(lang, "_", "-")
+	baseLang := lang
+	if i := strings.Index(baseLang, "-"); i >= 0 {
+		baseLang = baseLang[:i]
+	}
+
+	var loc config.DisconnectMessagesConfig
+	var ok bool
+	if loc, ok = lookupDisconnectLocale(locales, lang); !ok {
+		loc, ok = lookupDisconnectLocale(locales, baseLang)
+	}
+	if !ok {
+		return base
+	}
+
+	if strings.TrimSpace(loc.NoRoute) != "" {
+		base.NoRoute = loc.NoRoute
+	}
+	if strings.TrimSpace(loc.NoBackends) != "" {
+		base.NoBackends = loc.NoBackends
+	}
+	if strings.TrimSpace(loc.RoutingError) != "" {
+		base.RoutingError = loc.RoutingError
+	}
+	if strings.TrimSpace(loc.DiscoveryError) != "" {
+		base.DiscoveryError = loc.DiscoveryError
+	}
+	return base
+}
+
+func lookupDisconnectLocale(locales map[string]config.DisconnectMessagesConfig, key string) (config.DisconnectMessagesConfig, bool) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return config.DisconnectMessagesConfig{}, false
+	}
+	for k, v := range locales {
+		if strings.EqualFold(k, key) {
+			return v, true
+		}
+	}
+	return config.DisconnectMessagesConfig{}, false
+}
+
+func (s *Server) templateOrDefault(v string, def string) string {
+	if strings.TrimSpace(v) != "" {
+		return v
+	}
+	return def
+}
+
+func formatTemplate(tpl string, sni string, err error) string {
+	e := ""
+	if err != nil {
+		e = err.Error()
+	}
+	r := strings.NewReplacer(
+		"${sni}", sni,
+		"${error}", e,
+	)
+	return r.Replace(tpl)
 }

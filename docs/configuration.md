@@ -6,6 +6,10 @@ Development examples are provided under `dev/`:
 
 - [`dev/config.dev.yaml`](dev/config.dev.yaml) (no plugins)
 - [`dev/config.plugins.dev.yaml`](dev/config.plugins.dev.yaml) (plugins enabled)
+- [`dev/config.kubernetes.pods.dev.yaml`](dev/config.kubernetes.pods.dev.yaml) (Kubernetes discovery via Pods)
+- [`dev/config.kubernetes.endpointslices.dev.yaml`](dev/config.kubernetes.endpointslices.dev.yaml) (Kubernetes discovery via EndpointSlices)
+- [`dev/config.agones.observe.dev.yaml`](dev/config.agones.observe.dev.yaml) (Agones discovery observe mode)
+- [`dev/config.agones.allocate.dev.yaml`](dev/config.agones.allocate.dev.yaml) (Agones discovery allocate mode)
 
 ## CLI flags
  
@@ -81,6 +85,14 @@ Fields:
   - `match.hostname` (string) or `match.hostnames` (list of string)
   - `pool.strategy`
   - `pool.backends` (same schema as `default.backends`)
+  - `pool.discovery` (optional)
+    - `provider` (string): reference to a configured discovery provider
+    - `mode` (string): `union|prefer`
+    - `limit` (int): optional maximum number of candidates
+    - `sort` (list): optional sorting rules applied before load balancing
+      - `key` (string): e.g. `label:<k>`, `annotation:<k>`, `counter:<name>.count`
+      - `order` (string): `asc|desc`
+      - `type` (string): `string|number`
 
 Routing notes:
 
@@ -117,7 +129,181 @@ routing:
             port: 5520
 ```
 
+### `discovery`
+
+Optional dynamic backend discovery.
+
+If `discovery` is omitted, Hyrouter uses only statically configured `routing.*.backends`.
+
+Discovery is enabled per pool via `pool.discovery.provider`.
+
+#### Providers
+
+`discovery.providers` is a list of named providers.
+
+Each provider has:
+
+- `name` (string)
+- `type` (string): `kubernetes|agones`
+
+##### Kubernetes provider
+
+Selector semantics:
+
+- `resources[].selector.labels` is a Kubernetes label selector expression (for example `app=my-game,region in (eu,us)`).
+- `resources[].selector.annotations` is a simple comma-separated `k=v` matcher.
+
+Metadata:
+
+- `metadata.include_labels` copies the selected label keys into backend metadata under `label.<key>`.
+- `metadata.include_annotations` copies the selected annotation keys into backend metadata under `annotation.<key>`.
+
+RBAC (in-cluster):
+
+Hyrouter needs read permissions for the watched resources.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hyrouter-discovery
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
+```
+
+```yaml
+discovery:
+  providers:
+    - name: k8s
+      type: kubernetes
+      kubernetes:
+        kubeconfig: "" # empty => in-cluster
+        namespaces: ["hytale"]
+        resources:
+          - kind: endpointslices
+            service:
+              name: hytale-backend
+              namespace: hytale
+            port:
+              name: game
+        filters:
+          require_pod_ready: true
+          require_pod_phase: ["Running"]
+          require_endpoint_ready: true
+        metadata:
+          include_labels: ["region", "fleet"]
+          include_annotations: ["hyrouter/weight"]
+```
+
+##### Agones provider
+
+RBAC (in-cluster):
+
+Observe mode requires read access to `gameservers.agones.dev`. Allocate mode additionally requires create access to `gameserverallocations.allocation.agones.dev`.
+
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: hyrouter-agones
+rules:
+  - apiGroups: ["agones.dev"]
+    resources: ["gameservers"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["allocation.agones.dev"]
+    resources: ["gameserverallocations"]
+    verbs: ["create"]
+```
+
+```yaml
+discovery:
+  providers:
+    - name: agones
+      type: agones
+      agones:
+        kubeconfig: "" # empty => in-cluster
+        namespaces: ["hytale"]
+        mode: observe # observe|allocate
+        allocate_min_interval: "250ms" # optional; allocate mode only
+        state: ["Ready", "Reserved"]
+        selector:
+          labels: "agones.dev/fleet=hytale,region=eu"
+          annotations: "hyrouter/enabled=true"
+        port:
+          name: gameport
+```
+
+Allocate mode notes:
+
+- `allocate_min_interval` throttles allocation requests to avoid hammering the Kubernetes API.
+- If multiple `namespaces` or `state` entries are configured, allocate mode uses the first entry.
+
+#### Using a provider from routing
+
+```yaml
+routing:
+  routes:
+    - match:
+        hostname: "play.example.com"
+      pool:
+        strategy: round_robin
+        discovery:
+          provider: agones
+          mode: prefer
+          limit: 10
+          sort:
+            - key: counter:players.count
+              type: number
+              order: asc
+```
+
 See also: [`docs/routing.md`](docs/routing.md).
+
+### `messages`
+
+Optional user-facing messages.
+
+#### `messages.disconnect`
+
+Hyrouter may send a Hytale `Disconnect` packet if it cannot select a backend (for example because no route matched, there are no backends, or discovery failed).
+
+Fields:
+
+- `no_route`: used if no route/default matched
+- `no_backends`: used if a route matched but there are no backends
+- `routing_error`: generic routing error
+- `discovery_error`: discovery-related error
+
+Optional:
+
+- `disconnect_locales`: map of language tags to overrides. Hyrouter first tries an exact match (e.g. `de-DE`), then falls back to the base language (e.g. `de`), otherwise it uses `messages.disconnect`.
+
+All disconnect messages support the following template variables:
+
+- `${sni}`: the SNI hostname
+- `${error}`: the internal error string (usually leave this out for player-friendly messages)
+
+Example:
+
+```yaml
+messages:
+  disconnect:
+    no_route: "The server is currently unavailable."
+    no_backends: "The server is full or restarting. Please try again in a moment."
+    routing_error: "The server is currently unreachable. Please try again later."
+    discovery_error: "The server is looking for an available instance. Please try again in a moment."
+  disconnect_locales:
+    de:
+      no_route: "Der Server ist aktuell nicht verfügbar."
+      no_backends: "Der Server ist gerade voll oder startet neu. Bitte versuche es gleich erneut."
+      routing_error: "Der Server ist aktuell nicht erreichbar. Bitte versuche es später erneut."
+      discovery_error: "Der Server sucht gerade eine freie Instanz. Bitte versuche es gleich erneut."
+```
 
 ### `plugins`
 

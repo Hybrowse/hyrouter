@@ -63,3 +63,36 @@ func TestValidateErrors(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
+
+func TestValidateDiscoveryRefs(t *testing.T) {
+	cfg := Default()
+	cfg.Routing.Default = &routing.Pool{
+		Strategy:  "round_robin",
+		Discovery: &routing.Discovery{Provider: "missing"},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected error")
+	}
+
+	cfg = Default()
+	cfg.Discovery = &DiscoveryConfig{Providers: []DiscoveryProviderConfig{{Name: "p", Type: "kubernetes", Kubernetes: &KubernetesDiscoveryConfig{}}}}
+	cfg.Routing.Default = &routing.Pool{
+		Strategy:  "round_robin",
+		Discovery: &routing.Discovery{Provider: "p"},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+}
+
+func TestValidateDiscoveryAgonesAllocateMinIntervalInvalid(t *testing.T) {
+	cfg := Default()
+	cfg.Discovery = &DiscoveryConfig{Providers: []DiscoveryProviderConfig{{
+		Name:   "a",
+		Type:   "agones",
+		Agones: &AgonesDiscoveryConfig{AllocateMinInterval: "nope"},
+	}}}
+	if err := cfg.Validate(); err == nil {
+		t.Fatalf("expected error")
+	}
+}

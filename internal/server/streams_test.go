@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"testing"
 
+	"github.com/hybrowse/hyrouter/internal/config"
 	"github.com/hybrowse/hyrouter/internal/plugins"
 	"github.com/hybrowse/hyrouter/internal/routing"
 )
@@ -47,7 +48,7 @@ func TestDumpFrames_PluginDenySendsDisconnect(t *testing.T) {
 
 	s := &Server{logger: logger, plugins: plugins.NewManager(logger, []plugins.Plugin{&denyPlugin{}})}
 	decision := routing.Decision{Backend: routing.Backend{Host: "play.hyvane.com", Port: 5520}}
-	s.dumpFrames(context.Background(), rx, logger, decision, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), rx, logger, decision, nil, plugins.ConnectEvent{})
 
 	out := rx.w.Bytes()
 	if len(out) < 8 {
@@ -66,6 +67,138 @@ func TestDumpFrames_PluginDenySendsDisconnect(t *testing.T) {
 	}
 	if p[0] != 0x01 {
 		t.Fatalf("nullbits=%02x", p[0])
+	}
+}
+
+func disconnectReasonFromFrameForTest(t *testing.T, out []byte) string {
+	t.Helper()
+	if len(out) < 8 {
+		t.Fatalf("short out")
+	}
+	if binary.LittleEndian.Uint32(out[4:8]) != 1 {
+		t.Fatalf("expected packet 1, got %d", binary.LittleEndian.Uint32(out[4:8]))
+	}
+	payloadLen := int(binary.LittleEndian.Uint32(out[0:4]))
+	if 8+payloadLen > len(out) {
+		t.Fatalf("short payload")
+	}
+	p := out[8 : 8+payloadLen]
+	if len(p) == 2 && p[0] == 0 && p[1] == 0 {
+		return ""
+	}
+	if len(p) < 3 {
+		t.Fatalf("short disconnect payload")
+	}
+	if p[0] != 0x01 {
+		t.Fatalf("nullbits=%02x", p[0])
+	}
+	if p[1] != 0 {
+		t.Fatalf("type=%02x", p[1])
+	}
+	s, _, ok := readVarString(p, 2, 4096000)
+	if !ok {
+		t.Fatalf("failed to decode reason")
+	}
+	return s
+}
+
+func TestDumpFrames_DisconnectLocalized_ExactLocale(t *testing.T) {
+	connectPayload := buildConnectPayloadForTest(
+		"6708f121966c1c443f4b0eb525b2f81d0a8dc61f5003a692a8fa157e5e02cea9",
+		0,
+		"d3e6ef90-e113-49a7-a845-1c11f24fe166",
+		"de-DE",
+		"tok",
+		"Krymo",
+	)
+	frame := make([]byte, 8+len(connectPayload))
+	binary.LittleEndian.PutUint32(frame[0:4], uint32(len(connectPayload)))
+	binary.LittleEndian.PutUint32(frame[4:8], 0)
+	copy(frame[8:], connectPayload)
+
+	rx := &rw{r: bytes.NewReader(frame)}
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+
+	cfg := &config.Config{Messages: config.MessagesConfig{
+		Disconnect: config.DisconnectMessagesConfig{RoutingError: "EN ${sni}"},
+		DisconnectLocales: map[string]config.DisconnectMessagesConfig{
+			"de":    {RoutingError: "DE ${sni}"},
+			"de-DE": {RoutingError: "DE-DE ${sni}"},
+		},
+	}}
+
+	s := &Server{logger: logger, cfg: cfg}
+	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
+
+	reason := disconnectReasonFromFrameForTest(t, rx.w.Bytes())
+	if reason != "DE-DE example" {
+		t.Fatalf("reason=%q", reason)
+	}
+}
+
+func TestDumpFrames_DisconnectLocalized_BaseLanguageFallback(t *testing.T) {
+	connectPayload := buildConnectPayloadForTest(
+		"6708f121966c1c443f4b0eb525b2f81d0a8dc61f5003a692a8fa157e5e02cea9",
+		0,
+		"d3e6ef90-e113-49a7-a845-1c11f24fe166",
+		"de-AT",
+		"tok",
+		"Krymo",
+	)
+	frame := make([]byte, 8+len(connectPayload))
+	binary.LittleEndian.PutUint32(frame[0:4], uint32(len(connectPayload)))
+	binary.LittleEndian.PutUint32(frame[4:8], 0)
+	copy(frame[8:], connectPayload)
+
+	rx := &rw{r: bytes.NewReader(frame)}
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+
+	cfg := &config.Config{Messages: config.MessagesConfig{
+		Disconnect: config.DisconnectMessagesConfig{RoutingError: "EN ${sni}"},
+		DisconnectLocales: map[string]config.DisconnectMessagesConfig{
+			"de": {RoutingError: "DE ${sni}"},
+		},
+	}}
+
+	s := &Server{logger: logger, cfg: cfg}
+	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
+
+	reason := disconnectReasonFromFrameForTest(t, rx.w.Bytes())
+	if reason != "DE example" {
+		t.Fatalf("reason=%q", reason)
+	}
+}
+
+func TestDumpFrames_DisconnectLocalized_DefaultFallback(t *testing.T) {
+	connectPayload := buildConnectPayloadForTest(
+		"6708f121966c1c443f4b0eb525b2f81d0a8dc61f5003a692a8fa157e5e02cea9",
+		0,
+		"d3e6ef90-e113-49a7-a845-1c11f24fe166",
+		"fr-FR",
+		"tok",
+		"Krymo",
+	)
+	frame := make([]byte, 8+len(connectPayload))
+	binary.LittleEndian.PutUint32(frame[0:4], uint32(len(connectPayload)))
+	binary.LittleEndian.PutUint32(frame[4:8], 0)
+	copy(frame[8:], connectPayload)
+
+	rx := &rw{r: bytes.NewReader(frame)}
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+
+	cfg := &config.Config{Messages: config.MessagesConfig{
+		Disconnect: config.DisconnectMessagesConfig{RoutingError: "EN ${sni}"},
+		DisconnectLocales: map[string]config.DisconnectMessagesConfig{
+			"de": {RoutingError: "DE ${sni}"},
+		},
+	}}
+
+	s := &Server{logger: logger, cfg: cfg}
+	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
+
+	reason := disconnectReasonFromFrameForTest(t, rx.w.Bytes())
+	if reason != "EN example" {
+		t.Fatalf("reason=%q", reason)
 	}
 }
 
@@ -99,7 +232,7 @@ func TestDumpFrames_PluginMutatesReferralData(t *testing.T) {
 
 	s := &Server{logger: logger, plugins: plugins.NewManager(logger, []plugins.Plugin{&mutatePlugin{}})}
 	decision := routing.Decision{Backend: routing.Backend{Host: "play.hyvane.com", Port: 5520}}
-	s.dumpFrames(context.Background(), rx, logger, decision, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), rx, logger, decision, nil, plugins.ConnectEvent{})
 
 	out := rx.w.Bytes()
 	if len(out) < 8 {
@@ -141,20 +274,20 @@ func TestDumpFrames_InvalidFrameReturns(t *testing.T) {
 	rx := &rw{r: bytes.NewReader(frame)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 	s := &Server{logger: logger}
-	s.dumpFrames(context.Background(), rx, logger, routing.Decision{}, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), rx, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
 }
 
 func TestDumpFrames_ReadError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 	s := &Server{logger: logger}
-	s.dumpFrames(context.Background(), errReader{}, logger, routing.Decision{}, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), errReader{}, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
 }
 
 func TestDumpFrames_StreamClosedEOF(t *testing.T) {
 	rx := &rw{r: bytes.NewReader(nil)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 	s := &Server{logger: logger}
-	s.dumpFrames(context.Background(), rx, logger, routing.Decision{}, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), rx, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
 }
 
 func (x *rw) Read(p []byte) (int, error)  { return x.r.Read(p) }
@@ -180,7 +313,7 @@ func TestDumpFrames_SendsReferralOnConnect(t *testing.T) {
 
 	s := &Server{logger: logger}
 	decision := routing.Decision{Backend: routing.Backend{Host: "play.hyvane.com", Port: 5520}, Matched: false, RouteIndex: -1}
-	s.dumpFrames(context.Background(), rx, logger, decision, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), rx, logger, decision, nil, plugins.ConnectEvent{})
 
 	out := rx.w.Bytes()
 	if len(out) == 0 {
@@ -188,5 +321,71 @@ func TestDumpFrames_SendsReferralOnConnect(t *testing.T) {
 	}
 	if binary.LittleEndian.Uint32(out[4:8]) != 18 {
 		t.Fatalf("expected packet 18, got %d", binary.LittleEndian.Uint32(out[4:8]))
+	}
+}
+
+func TestDumpFrames_NoRouteSendsDisconnect(t *testing.T) {
+	connectPayload := buildConnectPayloadForTest(
+		"6708f121966c1c443f4b0eb525b2f81d0a8dc61f5003a692a8fa157e5e02cea9",
+		0,
+		"d3e6ef90-e113-49a7-a845-1c11f24fe166",
+		"de-DE",
+		"tok",
+		"Krymo",
+	)
+	frame := make([]byte, 8+len(connectPayload))
+	binary.LittleEndian.PutUint32(frame[0:4], uint32(len(connectPayload)))
+	binary.LittleEndian.PutUint32(frame[4:8], 0)
+	copy(frame[8:], connectPayload)
+
+	rx := &rw{r: bytes.NewReader(frame)}
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+
+	s := &Server{logger: logger}
+	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, nil, plugins.ConnectEvent{SNI: "x"})
+
+	out := rx.w.Bytes()
+	if len(out) < 8 {
+		t.Fatalf("short out")
+	}
+	if binary.LittleEndian.Uint32(out[4:8]) != 1 {
+		t.Fatalf("expected packet 1, got %d", binary.LittleEndian.Uint32(out[4:8]))
+	}
+}
+
+func TestDumpFrames_RoutingErrorUsesTemplate(t *testing.T) {
+	connectPayload := buildConnectPayloadForTest(
+		"6708f121966c1c443f4b0eb525b2f81d0a8dc61f5003a692a8fa157e5e02cea9",
+		0,
+		"d3e6ef90-e113-49a7-a845-1c11f24fe166",
+		"de-DE",
+		"tok",
+		"Krymo",
+	)
+	frame := make([]byte, 8+len(connectPayload))
+	binary.LittleEndian.PutUint32(frame[0:4], uint32(len(connectPayload)))
+	binary.LittleEndian.PutUint32(frame[4:8], 0)
+	copy(frame[8:], connectPayload)
+
+	rx := &rw{r: bytes.NewReader(frame)}
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+
+	s := &Server{logger: logger, cfg: &config.Config{Messages: config.MessagesConfig{Disconnect: config.DisconnectMessagesConfig{RoutingError: "oops ${sni} ${error}"}}}}
+	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
+
+	out := rx.w.Bytes()
+	if len(out) < 8 {
+		t.Fatalf("short out")
+	}
+	if binary.LittleEndian.Uint32(out[4:8]) != 1 {
+		t.Fatalf("expected packet 1")
+	}
+	payloadLen := int(binary.LittleEndian.Uint32(out[0:4]))
+	p := out[8 : 8+payloadLen]
+	if len(p) < 3 {
+		t.Fatalf("short payload")
+	}
+	if p[0] != 0x01 {
+		t.Fatalf("nullbits=%02x", p[0])
 	}
 }

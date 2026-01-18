@@ -3,10 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"time"
 
 	"github.com/hybrowse/hyrouter/internal/config"
+	"github.com/hybrowse/hyrouter/internal/discovery"
 	"github.com/hybrowse/hyrouter/internal/plugins"
 	"github.com/hybrowse/hyrouter/internal/routing"
 	"github.com/quic-go/quic-go"
@@ -16,18 +18,44 @@ type Server struct {
 	cfg        *config.Config
 	logger     *slog.Logger
 	router     routing.Engine
+	discovery  *discovery.Manager
+	initErr    error
 	pluginCfgs []config.PluginConfig
 	plugins    *plugins.Manager
 }
 
 func New(cfg *config.Config, logger *slog.Logger) *Server {
 	var r routing.Engine
+	var se *routing.StaticEngine
 	var pcfgs []config.PluginConfig
+	var dm *discovery.Manager
+	var initErr error
 	if cfg != nil {
-		r = routing.NewStaticEngine(cfg.Routing)
+		se = routing.NewStaticEngine(cfg.Routing)
+		r = se
 		pcfgs = cfg.Plugins
+		if cfg.Discovery != nil {
+			m, err := discovery.New(cfg.Discovery, logger)
+			if err != nil {
+				initErr = err
+			} else {
+				dm = m
+				if se != nil {
+					se.SetDiscovery(func(ctx context.Context, provider string) ([]routing.Backend, error) {
+						bs, ok, err := dm.Resolve(ctx, provider)
+						if err != nil {
+							return nil, err
+						}
+						if !ok {
+							return nil, fmt.Errorf("unknown discovery provider %q", provider)
+						}
+						return bs, nil
+					})
+				}
+			}
+		}
 	}
-	return &Server{cfg: cfg, logger: logger, router: r, pluginCfgs: pcfgs}
+	return &Server{cfg: cfg, logger: logger, router: r, pluginCfgs: pcfgs, discovery: dm, initErr: initErr}
 }
 
 func (s *Server) initPlugins(ctx context.Context) error {
@@ -50,9 +78,17 @@ func (s *Server) initPlugins(ctx context.Context) error {
 }
 
 func (s *Server) Run(ctx context.Context) error {
+	if s.initErr != nil {
+		return s.initErr
+	}
 	tlsConfig, err := s.buildTLSConfig()
 	if err != nil {
 		return err
+	}
+	if s.discovery != nil {
+		if err := s.discovery.Start(ctx); err != nil {
+			return err
+		}
 	}
 	if err := s.initPlugins(ctx); err != nil {
 		return err
@@ -105,11 +141,15 @@ func (s *Server) handleConn(ctx context.Context, conn *quic.Conn) {
 		"alpn", state.TLS.NegotiatedProtocol,
 	)
 
-	decision := routing.Decision{}
+	decision := routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}
+	routeErr := error(nil)
 	if s.router != nil {
 		d, err := s.router.Decide(conn.Context(), routing.Request{SNI: state.TLS.ServerName})
 		if err == nil {
 			decision = d
+		} else {
+			routeErr = err
+			logger.Info("routing error", "error", err)
 		}
 	}
 
@@ -126,8 +166,8 @@ func (s *Server) handleConn(ctx context.Context, conn *quic.Conn) {
 	)
 
 	connCtx := conn.Context()
-	go s.acceptBidiStreams(connCtx, conn, logger, decision, baseEvent)
-	go s.acceptUniStreams(connCtx, conn, logger, decision, baseEvent)
+	go s.acceptBidiStreams(connCtx, conn, logger, decision, routeErr, baseEvent)
+	go s.acceptUniStreams(connCtx, conn, logger, decision, routeErr, baseEvent)
 
 	select {
 	case <-ctx.Done():

@@ -2,6 +2,7 @@ package routing
 
 import (
 	"context"
+	"errors"
 	"math/rand"
 	"testing"
 )
@@ -97,6 +98,9 @@ func TestStaticEngineDecide(t *testing.T) {
 	if dec.Backend.Host != "" {
 		t.Fatalf("expected empty decision")
 	}
+	if dec.RouteIndex != -1 || dec.SelectedIndex != -1 {
+		t.Fatalf("expected indexes -1, got route_index=%d selected_index=%d", dec.RouteIndex, dec.SelectedIndex)
+	}
 }
 
 func TestStaticEngineDecide_RoundRobin(t *testing.T) {
@@ -163,5 +167,130 @@ func TestConfigValidate(t *testing.T) {
 	cfg = Config{Routes: []Route{{Pool: Pool{Strategy: "round_robin", Backends: []Backend{{Host: "x", Port: 1}}}}}}
 	if err := cfg.Validate(); err == nil {
 		t.Fatalf("expected error")
+	}
+}
+
+func TestStaticEngineDecide_DiscoveryUnionPreferSortLimit(t *testing.T) {
+	static := []Backend{{Host: "static-a", Port: 1, Meta: map[string]string{"counter.players.count": "10"}}}
+	disc := []Backend{
+		{Host: "disc-a", Port: 2, Meta: map[string]string{"counter.players.count": "3"}},
+		{Host: "disc-b", Port: 3, Meta: map[string]string{"counter.players.count": "7"}},
+	}
+
+	e := NewStaticEngine(Config{Routes: []Route{{
+		Match: Match{Hostname: "x"},
+		Pool:  Pool{Strategy: "round_robin", Backends: static, Discovery: &Discovery{Provider: "p", Mode: "union", Limit: 1, Sort: []SortKey{{Key: "counter:players.count", Type: "number", Order: "asc"}}}},
+	}}})
+	e.SetDiscovery(func(ctx context.Context, provider string) ([]Backend, error) {
+		_ = ctx
+		if provider != "p" {
+			return nil, nil
+		}
+		return disc, nil
+	})
+
+	dec, err := e.Decide(context.Background(), Request{SNI: "x"})
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if len(dec.Candidates) != 1 {
+		t.Fatalf("expected limit=1, got candidates=%d", len(dec.Candidates))
+	}
+	if dec.Backend.Host != "disc-a" {
+		t.Fatalf("expected smallest counter to win, got %#v", dec.Backend)
+	}
+
+	e2 := NewStaticEngine(Config{Routes: []Route{{
+		Match: Match{Hostname: "x"},
+		Pool:  Pool{Strategy: "round_robin", Backends: static, Discovery: &Discovery{Provider: "p", Mode: "prefer"}},
+	}}})
+	e2.SetDiscovery(func(ctx context.Context, provider string) ([]Backend, error) {
+		_ = ctx
+		_ = provider
+		return nil, nil
+	})
+	dec, err = e2.Decide(context.Background(), Request{SNI: "x"})
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if dec.Backend.Host != "static-a" {
+		t.Fatalf("expected static fallback when discovery empty, got %#v", dec.Backend)
+	}
+}
+
+func TestStaticEngineDecide_DiscoverySortMissingValues(t *testing.T) {
+	backends := []Backend{
+		{Host: "a", Port: 1, Meta: map[string]string{"counter.players.count": "10"}},
+		{Host: "b", Port: 2, Meta: map[string]string{}},
+		{Host: "c", Port: 3, Meta: map[string]string{"counter.players.count": "5"}},
+	}
+
+	e := NewStaticEngine(Config{Routes: []Route{{
+		Match: Match{Hostname: "x"},
+		Pool:  Pool{Strategy: "round_robin", Backends: backends, Discovery: &Discovery{Provider: "p", Mode: "union", Sort: []SortKey{{Key: "counter:players.count", Type: "number", Order: "asc"}}}},
+	}}})
+	e.SetDiscovery(func(ctx context.Context, provider string) ([]Backend, error) {
+		_ = ctx
+		_ = provider
+		return nil, nil
+	})
+
+	dec, err := e.Decide(context.Background(), Request{SNI: "x"})
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if len(dec.Candidates) != 3 {
+		t.Fatalf("candidates=%d", len(dec.Candidates))
+	}
+	if dec.Candidates[0].Host != "c" {
+		t.Fatalf("expected smallest numeric value first, got %#v", dec.Candidates)
+	}
+	if dec.Candidates[2].Host != "b" {
+		t.Fatalf("expected missing sort value last, got %#v", dec.Candidates)
+	}
+}
+
+func TestStaticEngineDecide_DiscoveryUnionDedupePrefersDiscovered(t *testing.T) {
+	static := []Backend{{Host: "same", Port: 1, Meta: map[string]string{"label.region": "static"}}}
+	disc := []Backend{{Host: "same", Port: 1, Meta: map[string]string{"label.region": "disc"}}}
+
+	e := NewStaticEngine(Config{Routes: []Route{{
+		Match: Match{Hostname: "x"},
+		Pool:  Pool{Strategy: "round_robin", Backends: static, Discovery: &Discovery{Provider: "p", Mode: "union"}},
+	}}})
+	e.SetDiscovery(func(ctx context.Context, provider string) ([]Backend, error) {
+		_ = ctx
+		_ = provider
+		return disc, nil
+	})
+
+	dec, err := e.Decide(context.Background(), Request{SNI: "x"})
+	if err != nil {
+		t.Fatalf("Decide: %v", err)
+	}
+	if len(dec.Candidates) != 1 {
+		t.Fatalf("expected dedupe to 1 candidate, got %d", len(dec.Candidates))
+	}
+	if got := dec.Candidates[0].Meta["label.region"]; got != "disc" {
+		t.Fatalf("expected discovered metadata to win, got %q", got)
+	}
+}
+
+func TestStaticEngineDecide_DiscoveryErrorWrapped(t *testing.T) {
+	e := NewStaticEngine(Config{Routes: []Route{{
+		Match: Match{Hostname: "x"},
+		Pool:  Pool{Strategy: "round_robin", Backends: []Backend{{Host: "a", Port: 1}}, Discovery: &Discovery{Provider: "p", Mode: "union"}},
+	}}})
+	e.SetDiscovery(func(ctx context.Context, provider string) ([]Backend, error) {
+		_ = ctx
+		_ = provider
+		return nil, ErrNoBackends
+	})
+	_, err := e.Decide(context.Background(), Request{SNI: "x"})
+	if err == nil {
+		t.Fatalf("expected error")
+	}
+	if !errors.Is(err, ErrDiscovery) {
+		t.Fatalf("expected ErrDiscovery wrapper, got %v", err)
 	}
 }
