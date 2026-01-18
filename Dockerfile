@@ -2,12 +2,17 @@ FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 
+ARG TARGETOS
+ARG TARGETARCH
+
 COPY go.mod go.sum ./
 RUN go mod download
 
-COPY . .
+COPY cmd ./cmd
+COPY internal ./internal
+COPY config.yaml ./
 
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/hyrouter ./cmd/hyrouter
+RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -buildvcs=false -trimpath -ldflags "-s -w" -o /out/hyrouter ./cmd/hyrouter
 
 FROM alpine:3.23
 
