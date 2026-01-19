@@ -25,8 +25,7 @@ func newGRPCPlugin(ctx context.Context, cfg config.PluginConfig, logger *slog.Lo
 	codec := jsonCodec{}
 	encoding.RegisterCodec(codec)
 
-	conn, err := grpc.DialContext(
-		ctx,
+	conn, err := grpc.NewClient(
 		cfg.GRPC.Address,
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithDefaultCallOptions(grpc.ForceCodec(codec)),

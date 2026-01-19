@@ -114,7 +114,7 @@ func (s *Server) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer listener.Close()
+	defer listener.Close() // nolint:errcheck
 
 	s.logger.Info("listening", "addr", s.cfg.Listen)
 
@@ -122,7 +122,7 @@ func (s *Server) Run(ctx context.Context) error {
 		conn, err := listener.Accept(ctx)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || ctx.Err() != nil {
-				listener.Close()
+				listener.Close() // nolint:errcheck
 				return nil
 			}
 			return err

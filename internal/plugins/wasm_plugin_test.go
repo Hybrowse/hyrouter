@@ -83,7 +83,7 @@ func main() {}
 	if p.Name() != "w" {
 		t.Fatalf("name=%q", p.Name())
 	}
-	defer p.Close(context.Background())
+	defer p.Close(context.Background()) // nolint:errcheck
 
 	resp, err := p.OnConnect(context.Background(), ConnectRequest{Event: ConnectEvent{Username: "u"}})
 	if err != nil {

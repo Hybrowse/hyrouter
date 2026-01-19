@@ -96,8 +96,8 @@ func (p *kubernetesProvider) Start(ctx context.Context) error {
 			UpdateFunc: func(_, _ interface{}) { p.rebuild() },
 			DeleteFunc: func(_ interface{}) { p.rebuild() },
 		}
-		podInf.AddEventHandler(h)
-		epInf.AddEventHandler(h)
+		podInf.AddEventHandler(h) // nolint:errcheck
+		epInf.AddEventHandler(h)  // nolint:errcheck
 
 		p.factory.Start(ctx.Done())
 		ok := cache.WaitForCacheSync(ctx.Done(), podInf.HasSynced, epInf.HasSynced)

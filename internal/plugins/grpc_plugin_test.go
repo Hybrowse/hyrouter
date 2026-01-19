@@ -33,18 +33,18 @@ func TestGRPCPlugin_OnConnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer lis.Close()
+	defer lis.Close() // nolint:errcheck
 
 	s := grpc.NewServer()
 	RegisterGRPCServer(s, &testGRPCServer{})
-	go s.Serve(lis)
+	go s.Serve(lis) // nolint:errcheck
 	defer s.Stop()
 
 	p, err := newGRPCPlugin(context.Background(), config.PluginConfig{Name: "p", Type: "grpc", GRPC: &config.GRPCPluginConfig{Address: lis.Addr().String()}}, nil)
 	if err != nil {
 		t.Fatalf("newGRPCPlugin: %v", err)
 	}
-	defer p.Close(context.Background())
+	defer p.Close(context.Background()) // nolint:errcheck
 	if p.Name() != "p" {
 		t.Fatalf("name=%q", p.Name())
 	}

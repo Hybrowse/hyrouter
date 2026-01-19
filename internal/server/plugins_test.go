@@ -56,11 +56,11 @@ func TestInitPlugins_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer lis.Close()
+	defer lis.Close() // nolint:errcheck
 
 	g := grpc.NewServer()
 	plugins.RegisterGRPCServer(g, &testPluginServer{})
-	go g.Serve(lis)
+	go g.Serve(lis) // nolint:errcheck
 	defer g.Stop()
 
 	s := &Server{logger: slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))}

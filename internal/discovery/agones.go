@@ -90,7 +90,7 @@ func (p *agonesProvider) Start(ctx context.Context) error {
 			}
 		})
 		p.inf = p.factory.ForResource(gsGVR).Informer()
-		p.inf.AddEventHandler(cache.ResourceEventHandlerFuncs{
+		p.inf.AddEventHandler(cache.ResourceEventHandlerFuncs{ // nolint:errcheck
 			AddFunc:    func(_ interface{}) { p.rebuild() },
 			UpdateFunc: func(_, _ interface{}) { p.rebuild() },
 			DeleteFunc: func(_ interface{}) { p.rebuild() },

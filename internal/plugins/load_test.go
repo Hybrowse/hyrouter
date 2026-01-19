@@ -28,11 +28,11 @@ func TestLoadAll_GRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer lis.Close()
+	defer lis.Close() // nolint:errcheck
 
 	s := grpc.NewServer()
 	RegisterGRPCServer(s, &testGRPCServer{})
-	go s.Serve(lis)
+	go s.Serve(lis) // nolint:errcheck
 	defer s.Stop()
 
 	pls, err := LoadAll(context.Background(), []config.PluginConfig{{Name: "p", Type: "grpc", GRPC: &config.GRPCPluginConfig{Address: lis.Addr().String()}}}, nil)

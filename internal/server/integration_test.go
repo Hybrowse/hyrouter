@@ -99,7 +99,7 @@ func TestEndToEndReferralRedirect(t *testing.T) {
 	}()
 
 	conn := dialQUIC(t, addr)
-	defer conn.CloseWithError(0, "done")
+	defer conn.CloseWithError(0, "done") // nolint:errcheck
 
 	uni, err := conn.OpenUniStreamSync(ctx)
 	if err != nil {

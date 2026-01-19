@@ -70,10 +70,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 		if n > 0 {
 			pending = append(pending, buf[:n]...)
 
-			for {
-				if len(pending) < 8 {
-					break
-				}
+			for len(pending) >= 8 {
 
 				payloadLen := int32(binary.LittleEndian.Uint32(pending[0:4]))
 				packetID := int32(binary.LittleEndian.Uint32(pending[4:8]))
