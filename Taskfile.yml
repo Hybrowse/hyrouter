@@ -5,6 +5,14 @@ tasks:
     cmds:
       - go fmt ./...
 
+  vet:
+    cmds:
+      - go vet ./...
+
+  lint:
+    cmds:
+      - golangci-lint run
+
   tidy:
     cmds:
       - go mod tidy
@@ -25,6 +33,20 @@ tasks:
     cmds:
       - go test -count=1 {{.PKGS}} -coverpkg={{.COVERPKG}} -coverprofile=coverage.out -covermode=atomic
       - go tool cover -func=coverage.out | tail -n 1
+
+  race:
+    vars:
+      PKGS:
+        sh: go list ./... | grep -v '/examples' | paste -sd' ' -
+    cmds:
+      - go test -race {{.PKGS}}
+
+  ci:
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: cover
 
   build:
     cmds:
@@ -55,6 +77,10 @@ tasks:
     cmds:
       - go run ./cmd/hyrouter -config dev/config.plugins.dev.yaml -log-level debug
 
-  docker:
+  docker:build:
     cmds:
       - docker build -t hyrouter:test .
+
+  docker:run:
+    cmds:
+      - docker run --rm -p 8080:8080 hyrouter:test

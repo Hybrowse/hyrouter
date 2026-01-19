@@ -18,11 +18,34 @@ jobs:
 
       - name: Run tests
         run: |
-          go test ./...
+          go test -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Enforce coverage >= 90%
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/{print substr($3, 1, length($3)-1)}')
+          echo "Total coverage: ${total}%"
+          awk -v total="$total" 'BEGIN{ if (total+0 < 90) { print "coverage below 90%"; exit 1 } }'
 
       - name: Run example builds
         run: |
           go test -tags examples ./...
+
+  golangci-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62.2
+          args: --timeout=5m
 
   docker-image-tests:
     runs-on: ubuntu-latest
