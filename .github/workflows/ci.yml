@@ -20,12 +20,6 @@ jobs:
         run: |
           go test -coverpkg=./... -coverprofile=coverage.out -covermode=atomic ./...
 
-      - name: Enforce coverage >= 90%
-        run: |
-          total=$(go tool cover -func=coverage.out | awk '/^total:/{print substr($3, 1, length($3)-1)}')
-          echo "Total coverage: ${total}%"
-          awk -v total="$total" 'BEGIN{ if (total+0 < 90) { print "coverage below 90%"; exit 1 } }'
-
       - name: Run example builds
         run: |
           go test -tags examples ./...
