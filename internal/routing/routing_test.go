@@ -179,7 +179,7 @@ func TestStaticEngineDecide_DiscoveryUnionPreferSortLimit(t *testing.T) {
 
 	e := NewStaticEngine(Config{Routes: []Route{{
 		Match: Match{Hostname: "x"},
-		Pool:  Pool{Strategy: "round_robin", Backends: static, Discovery: &Discovery{Provider: "p", Mode: "union", Limit: 1, Sort: []SortKey{{Key: "counter:players.count", Type: "number", Order: "asc"}}}},
+		Pool:  Pool{Strategy: "round_robin", Sort: []SortKey{{Key: "counter:players.count", Type: "number", Order: "asc"}}, Limit: 1, Backends: static, Discovery: &Discovery{Provider: "p", Mode: "union"}},
 	}}})
 	e.SetDiscovery(func(ctx context.Context, provider string) ([]Backend, error) {
 		_ = ctx
@@ -227,7 +227,7 @@ func TestStaticEngineDecide_DiscoverySortMissingValues(t *testing.T) {
 
 	e := NewStaticEngine(Config{Routes: []Route{{
 		Match: Match{Hostname: "x"},
-		Pool:  Pool{Strategy: "round_robin", Backends: backends, Discovery: &Discovery{Provider: "p", Mode: "union", Sort: []SortKey{{Key: "counter:players.count", Type: "number", Order: "asc"}}}},
+		Pool:  Pool{Strategy: "round_robin", Sort: []SortKey{{Key: "counter:players.count", Type: "number", Order: "asc"}}, Backends: backends, Discovery: &Discovery{Provider: "p", Mode: "union"}},
 	}}})
 	e.SetDiscovery(func(ctx context.Context, provider string) ([]Backend, error) {
 		_ = ctx

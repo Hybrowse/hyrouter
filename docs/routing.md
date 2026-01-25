@@ -36,6 +36,45 @@ Pool strategies:
 - `round_robin`
 - `random`
 - `weighted` (requires `weight > 0` on each backend)
+- `least_loaded` (requires `key`)
+- `p2c` (power-of-two-choices; requires `key`, optional `sample`)
+
+Notes:
+
+- `round_robin` cycles deterministically through the candidate list. This tends to distribute load evenly across backends.
+- `random` picks a backend uniformly at random from the candidate list. This is non-deterministic and may produce streaks.
+- `p2c` samples `sample` random candidates (default: 2) and chooses the one with the smallest numeric value for `key`.
+
+Pool selection controls:
+
+- `pool.sort` sorts candidates before load balancing.
+- `pool.limit` optionally caps the candidate set before load balancing.
+- `pool.filters` can filter candidates before sorting and selection.
+- `pool.fallback` defines additional selection attempts if the initial filters yield no candidates.
+
+## Filters
+
+Filters are evaluated against backend metadata and the decoded `Connect` request.
+
+### `whitelist`
+
+The `whitelist` filter is enabled per-backend via a metadata key and then checks whether the client is included in a backend-provided allowlist.
+
+Fields:
+
+- `enabled_key`: backend meta key that toggles whitelist behavior (`true`/`1`/`yes` enables it)
+- `list_key`: backend meta key holding the allowlist (JSON array or comma-separated list)
+- `subject`: which client field to match against the allowlist (`uuid` or `username`, default: `uuid`)
+
+Example:
+
+```yaml
+filters:
+  - type: whitelist
+    subject: uuid
+    enabled_key: annotation.agones.dev/sdk-whitelist-enabled
+    list_key: list.whitelistedPlayers.values
+```
 
 ### Discovery-backed pools
 
@@ -45,8 +84,6 @@ A pool can optionally reference a discovery provider instead of (or in addition 
 - `pool.discovery.mode` controls how discovered backends interact with static backends:
   - `prefer`: use discovered backends if any exist, otherwise fall back to static backends
   - `union`: merge static + discovered backends
-- `pool.discovery.sort` sorts candidates before load balancing.
-- `pool.discovery.limit` optionally caps the candidate set before load balancing.
 
 ## Example
 
@@ -85,14 +122,14 @@ routing:
         hostname: "play.example.com"
       pool:
         strategy: round_robin
+        sort:
+          - key: counter:players.count
+            type: number
+            order: asc
+        limit: 10
         discovery:
           provider: agones
           mode: prefer
-          sort:
-            - key: counter:players.count
-              type: number
-              order: asc
-          limit: 10
 ```
 
 ## Interaction with plugins

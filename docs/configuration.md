@@ -43,6 +43,8 @@ Notes:
 - `cert_file` and `key_file` must be set together.
 - If both are omitted, Hyrouter generates a short-lived self-signed certificate for development.
 - Hyrouter requests (but does not require) a client certificate. If present, the certificate fingerprint is exposed to plugins.
+- Default: `hytale/*` (accept any `hytale/<n>` ALPN offered by the client).
+- To restrict to specific protocol versions, set `alpn` explicitly (for example `hytale/2`).
 
 Example:
 
@@ -51,7 +53,7 @@ tls:
   cert_file: "/etc/hyrouter/tls.crt"
   key_file: "/etc/hyrouter/tls.key"
   alpn:
-    - hytale/1
+    - hytale/*
 ```
 
 ### `quic`
@@ -69,6 +71,21 @@ quic:
   max_idle_timeout: 30s
 ```
 
+### `logging`
+
+Logging configuration.
+
+Fields:
+
+- `log_client_ip` (bool): include the client socket address (`remote_addr`) in logs.
+
+Example:
+
+```yaml
+logging:
+  log_client_ip: false
+```
+
 ### `routing`
 
 Static routing rules based on the TLS SNI (hostname) observed during the QUIC handshake.
@@ -76,7 +93,13 @@ Static routing rules based on the TLS SNI (hostname) observed during the QUIC ha
 Fields:
 
 - `default`: fallback pool (optional)
-  - `strategy` (string): `round_robin|random|weighted`
+  - `strategy` (string): `round_robin|random|weighted|least_loaded|p2c`
+  - `key` (string, required for `least_loaded` and `p2c`)
+  - `sample` (int, optional; `p2c` only)
+  - `sort` (list, optional): sorting rules applied before load balancing
+  - `limit` (int, optional): optional maximum number of candidates
+  - `filters` (list, optional): candidate filters
+  - `fallback` (list, optional): additional selection attempts applied if filters yield no candidates
   - `backends` (list)
     - `host` (string)
     - `port` (int)
@@ -84,15 +107,12 @@ Fields:
 - `routes`: ordered list of routing rules (optional)
   - `match.hostname` (string) or `match.hostnames` (list of string)
   - `pool.strategy`
+  - `pool.key` / `pool.sample` / `pool.sort` / `pool.limit` / `pool.filters` / `pool.fallback`
   - `pool.backends` (same schema as `default.backends`)
   - `pool.discovery` (optional)
     - `provider` (string): reference to a configured discovery provider
     - `mode` (string): `union|prefer`
-    - `limit` (int): optional maximum number of candidates
-    - `sort` (list): optional sorting rules applied before load balancing
-      - `key` (string): e.g. `label:<k>`, `annotation:<k>`, `counter:<name>.count`
-      - `order` (string): `asc|desc`
-      - `type` (string): `string|number`
+  - Sort/limit/filtering are controlled at the pool level (not under `pool.discovery`).
 
 Routing notes:
 
@@ -127,6 +147,29 @@ routing:
         backends:
           - host: wildcard-backend.internal
             port: 5520
+
+    - match:
+        hostname: "play.example.com"
+      pool:
+        strategy: p2c
+        key: counter:onlinePlayers.count
+        sample: 2
+        filters:
+          - type: compare
+            left: counter:onlinePlayers.count
+            op: lt
+            right: counter:onlinePlayers.capacity
+          - type: game_start_not_past
+            key: annotation.agones.dev/sdk-game-start
+          - type: whitelist
+            enabled_key: annotation.agones.dev/sdk-whitelist-enabled
+            list_key: list.whitelistedPlayers.values
+        fallback:
+          - strategy: round_robin
+            filters: []
+        discovery:
+          provider: agones
+          mode: prefer
 ```
 
 ### `referral`
@@ -259,6 +302,11 @@ discovery:
         selector:
           labels: "agones.dev/fleet=hytale,region=eu"
           annotations: "hyrouter/enabled=true"
+        metadata:
+          include_labels: ["agones.dev/fleet", "hytale.hyvane.com/region", "hytale.hyvane.com/server-tag"]
+          include_annotations: ["agones.dev/sdk-whitelist-enabled", "agones.dev/sdk-game-start"]
+        address_source: "addresses" # address|addresses
+        address_preference: ["ExternalIP", "PublicIP", "NodeExternalIP"]
         port:
           name: gameport
 ```
@@ -276,15 +324,17 @@ routing:
     - match:
         hostname: "play.example.com"
       pool:
-        strategy: round_robin
+        strategy: p2c
+        key: counter:players.count
+        sample: 2
+        sort:
+          - key: counter:players.count
+            type: number
+            order: asc
+        limit: 10
         discovery:
           provider: agones
           mode: prefer
-          limit: 10
-          sort:
-            - key: counter:players.count
-              type: number
-              order: asc
 ```
 
 See also: [`docs/routing.md`](docs/routing.md).

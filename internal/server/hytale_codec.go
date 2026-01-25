@@ -44,6 +44,23 @@ func encodeDisconnectPayload(reason string) ([]byte, error) {
 	return payload.Bytes(), nil
 }
 
+func encodeConnectAcceptPayload(passwordChallenge []byte) ([]byte, error) {
+	var payload bytes.Buffer
+	if passwordChallenge == nil {
+		payload.WriteByte(0)
+		return payload.Bytes(), nil
+	}
+	if len(passwordChallenge) > 64 {
+		return nil, fmt.Errorf("password challenge too long")
+	}
+	payload.WriteByte(0x01)
+	if err := writeVarInt(&payload, len(passwordChallenge)); err != nil {
+		return nil, err
+	}
+	payload.Write(passwordChallenge)
+	return payload.Bytes(), nil
+}
+
 func encodeClientReferralPayload(host string, port uint16, data []byte) ([]byte, error) {
 	if host == "" {
 		return nil, fmt.Errorf("host must not be empty")
@@ -142,6 +159,9 @@ type hostAddress struct {
 
 type connectPayloadInfo struct {
 	protocolHash         string
+	protocolCrc          int32
+	protocolBuildNumber  int32
+	clientVersion        string
 	clientType           uint8
 	uuid                 string
 	language             string
@@ -152,6 +172,32 @@ type connectPayloadInfo struct {
 }
 
 func decodeConnectPayload(payload []byte) (connectPayloadInfo, bool) {
+	if len(payload) >= 102 && looksLikeHexFixedASCII(payload, 1, 64) {
+		return decodeConnectPayloadV1(payload)
+	}
+	if info, ok := decodeConnectPayloadV2(payload); ok {
+		return info, true
+	}
+	return decodeConnectPayloadV1(payload)
+}
+
+func looksLikeHexFixedASCII(b []byte, start int, length int) bool {
+	if start < 0 || length <= 0 || start+length > len(b) {
+		return false
+	}
+	for _, c := range b[start : start+length] {
+		if c == 0 {
+			continue
+		}
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func decodeConnectPayloadV1(payload []byte) (connectPayloadInfo, bool) {
 	if len(payload) < 102 {
 		return connectPayloadInfo{}, false
 	}
@@ -206,6 +252,76 @@ func decodeConnectPayload(payload []byte) (connectPayloadInfo, bool) {
 
 	if (nullBits&0x08) != 0 && referralSourceOffset >= 0 {
 		pos := 102 + referralSourceOffset
+		if ha, _, ok := decodeHostAddress(payload, pos); ok {
+			info.referralSource = &ha
+		}
+	}
+
+	return info, true
+}
+
+func decodeConnectPayloadV2(payload []byte) (connectPayloadInfo, bool) {
+	if len(payload) < 66 {
+		return connectPayloadInfo{}, false
+	}
+
+	nullBits := payload[0]
+
+	info := connectPayloadInfo{}
+	info.protocolCrc = int32(binary.LittleEndian.Uint32(payload[1:5]))
+	info.protocolBuildNumber = int32(binary.LittleEndian.Uint32(payload[5:9]))
+	info.clientVersion = readFixedASCII(payload, 9, 20)
+	info.protocolHash = info.clientVersion
+	info.clientType = payload[29]
+
+	msb := binary.BigEndian.Uint64(payload[30:38])
+	lsb := binary.BigEndian.Uint64(payload[38:46])
+	info.uuid = formatUUID(msb, lsb)
+
+	usernameOffset := int(int32(binary.LittleEndian.Uint32(payload[46:50])))
+	identityOffset := int(int32(binary.LittleEndian.Uint32(payload[50:54])))
+	languageOffset := int(int32(binary.LittleEndian.Uint32(payload[54:58])))
+	referralDataOffset := int(int32(binary.LittleEndian.Uint32(payload[58:62])))
+	referralSourceOffset := int(int32(binary.LittleEndian.Uint32(payload[62:66])))
+
+	if usernameOffset < 0 {
+		return connectPayloadInfo{}, false
+	}
+	if s, _, ok := readVarString(payload, 66+usernameOffset, 16); ok {
+		info.username = s
+	} else {
+		return connectPayloadInfo{}, false
+	}
+
+	if (nullBits&0x01) != 0 && identityOffset >= 0 {
+		pos := 66 + identityOffset
+		_, _, ok := readVarString(payload, pos, 8192)
+		info.identityTokenPresent = ok
+	}
+
+	if languageOffset < 0 {
+		return connectPayloadInfo{}, false
+	}
+	if s, _, ok := readVarString(payload, 66+languageOffset, 16); ok {
+		info.language = s
+	} else {
+		return connectPayloadInfo{}, false
+	}
+
+	if (nullBits&0x02) != 0 && referralDataOffset >= 0 {
+		pos := 66 + referralDataOffset
+		l, lsz, ok := readVarInt(payload, pos)
+		if ok && l >= 0 && l <= 4096 {
+			start := pos + lsz
+			end := start + l
+			if start >= 0 && end <= len(payload) {
+				info.referralDataLen = l
+			}
+		}
+	}
+
+	if (nullBits&0x04) != 0 && referralSourceOffset >= 0 {
+		pos := 66 + referralSourceOffset
 		if ha, _, ok := decodeHostAddress(payload, pos); ok {
 			info.referralSource = &ha
 		}

@@ -2,10 +2,13 @@ listen: ":5520"
 
 tls:
   alpn:
-    - hytale/1
+    - hytale/*
 
 quic:
   max_idle_timeout: 30s
+
+logging:
+  log_client_ip: true
 
 messages:
   disconnect:
@@ -66,8 +69,7 @@ discovery:
         filters:
           require_endpoint_ready: true
         metadata:
-          include_labels:
-            - region
+          include_labels: []
           include_annotations:
             - hyrouter/weight
 
@@ -77,14 +79,10 @@ routing:
         hostname: "play.example.com"
       pool:
         strategy: round_robin
+        limit: 20
         backends:
           - host: play.hyvane.com
             port: 5520
         discovery:
           provider: k8s
           mode: prefer
-          limit: 20
-          sort:
-            - key: label:region
-              order: asc
-              type: string

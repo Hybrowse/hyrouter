@@ -6,3 +6,5 @@ coverage.out
 
 .windsurf/
 .claude/
+
+bin/

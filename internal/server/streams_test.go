@@ -49,7 +49,7 @@ func TestDumpFrames_PluginDenySendsDisconnect(t *testing.T) {
 
 	s := &Server{logger: logger, plugins: plugins.NewManager(logger, []plugins.Plugin{&denyPlugin{}})}
 	decision := routing.Decision{Backend: routing.Backend{Host: "play.hyvane.com", Port: 5520}}
-	s.dumpFrames(context.Background(), rx, logger, decision, nil, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), nil, rx, logger, decision, nil, plugins.ConnectEvent{})
 
 	out := rx.w.Bytes()
 	if len(out) < 8 {
@@ -129,7 +129,7 @@ func TestDumpFrames_DisconnectLocalized_ExactLocale(t *testing.T) {
 	}}
 
 	s := &Server{logger: logger, cfg: cfg}
-	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
+	s.dumpFrames(context.Background(), nil, rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
 
 	reason := disconnectReasonFromFrameForTest(t, rx.w.Bytes())
 	if reason != "DE-DE example" {
@@ -162,7 +162,7 @@ func TestDumpFrames_DisconnectLocalized_BaseLanguageFallback(t *testing.T) {
 	}}
 
 	s := &Server{logger: logger, cfg: cfg}
-	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
+	s.dumpFrames(context.Background(), nil, rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
 
 	reason := disconnectReasonFromFrameForTest(t, rx.w.Bytes())
 	if reason != "DE example" {
@@ -195,7 +195,7 @@ func TestDumpFrames_DisconnectLocalized_DefaultFallback(t *testing.T) {
 	}}
 
 	s := &Server{logger: logger, cfg: cfg}
-	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
+	s.dumpFrames(context.Background(), nil, rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
 
 	reason := disconnectReasonFromFrameForTest(t, rx.w.Bytes())
 	if reason != "EN example" {
@@ -233,7 +233,7 @@ func TestDumpFrames_PluginMutatesReferralContent(t *testing.T) {
 
 	s := &Server{logger: logger, plugins: plugins.NewManager(logger, []plugins.Plugin{&mutatePlugin{}})}
 	decision := routing.Decision{Backend: routing.Backend{Host: "play.hyvane.com", Port: 5520}}
-	s.dumpFrames(context.Background(), rx, logger, decision, nil, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), nil, rx, logger, decision, nil, plugins.ConnectEvent{})
 
 	out := rx.w.Bytes()
 	if len(out) < 8 {
@@ -282,20 +282,20 @@ func TestDumpFrames_InvalidFrameReturns(t *testing.T) {
 	rx := &rw{r: bytes.NewReader(frame)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 	s := &Server{logger: logger}
-	s.dumpFrames(context.Background(), rx, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), nil, rx, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
 }
 
 func TestDumpFrames_ReadError(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 	s := &Server{logger: logger}
-	s.dumpFrames(context.Background(), errReader{}, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), nil, errReader{}, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
 }
 
 func TestDumpFrames_StreamClosedEOF(t *testing.T) {
 	rx := &rw{r: bytes.NewReader(nil)}
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 	s := &Server{logger: logger}
-	s.dumpFrames(context.Background(), rx, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), nil, rx, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
 }
 
 func (x *rw) Read(p []byte) (int, error)  { return x.r.Read(p) }
@@ -321,7 +321,7 @@ func TestDumpFrames_SendsReferralOnConnect(t *testing.T) {
 
 	s := &Server{logger: logger}
 	decision := routing.Decision{Backend: routing.Backend{Host: "play.hyvane.com", Port: 5520}, Matched: false, RouteIndex: -1}
-	s.dumpFrames(context.Background(), rx, logger, decision, nil, plugins.ConnectEvent{})
+	s.dumpFrames(context.Background(), nil, rx, logger, decision, nil, plugins.ConnectEvent{})
 
 	out := rx.w.Bytes()
 	if len(out) == 0 {
@@ -332,29 +332,29 @@ func TestDumpFrames_SendsReferralOnConnect(t *testing.T) {
 	}
 	payloadLen := int(binary.LittleEndian.Uint32(out[0:4]))
 	p := out[8 : 8+payloadLen]
-	if p[0]&0x02 == 0 {
-		t.Fatalf("expected data bit")
-	}
-	dataOffset := int(int32(binary.LittleEndian.Uint32(p[5:9])))
-	if dataOffset < 0 {
-		t.Fatalf("expected data offset")
-	}
-	varStart := 9
-	pos := varStart + dataOffset
-	l, sz, ok := readVarInt(p, pos)
-	if !ok || l < 0 {
-		t.Fatalf("len=%d ok=%v", l, ok)
-	}
-	if pos+sz+l > len(p) {
-		t.Fatalf("short data")
-	}
-	data := p[pos+sz : pos+sz+l]
-	env, err := referral.Parse(data)
-	if err != nil {
-		t.Fatalf("parse envelope: %v", err)
-	}
-	if len(env.Content) != 0 {
-		t.Fatalf("content=%v", env.Content)
+	// No referral data is expected by default; the server may omit it entirely.
+	if p[0]&0x02 != 0 {
+		dataOffset := int(int32(binary.LittleEndian.Uint32(p[5:9])))
+		if dataOffset < 0 {
+			t.Fatalf("expected data offset")
+		}
+		varStart := 9
+		pos := varStart + dataOffset
+		l, sz, ok := readVarInt(p, pos)
+		if !ok || l < 0 {
+			t.Fatalf("len=%d ok=%v", l, ok)
+		}
+		if pos+sz+l > len(p) {
+			t.Fatalf("short data")
+		}
+		data := p[pos+sz : pos+sz+l]
+		env, err := referral.Parse(data)
+		if err != nil {
+			t.Fatalf("parse envelope: %v", err)
+		}
+		if len(env.Content) != 0 {
+			t.Fatalf("content=%v", env.Content)
+		}
 	}
 }
 
@@ -376,7 +376,7 @@ func TestDumpFrames_NoRouteSendsDisconnect(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 
 	s := &Server{logger: logger}
-	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, nil, plugins.ConnectEvent{SNI: "x"})
+	s.dumpFrames(context.Background(), nil, rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, nil, plugins.ConnectEvent{SNI: "x"})
 
 	out := rx.w.Bytes()
 	if len(out) < 8 {
@@ -405,7 +405,7 @@ func TestDumpFrames_RoutingErrorUsesTemplate(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 
 	s := &Server{logger: logger, cfg: &config.Config{Messages: config.MessagesConfig{Disconnect: config.DisconnectMessagesConfig{RoutingError: "oops ${sni} ${error}"}}}}
-	s.dumpFrames(context.Background(), rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
+	s.dumpFrames(context.Background(), nil, rx, logger, routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}, routing.ErrUnknownStrategy, plugins.ConnectEvent{SNI: "example"})
 
 	out := rx.w.Bytes()
 	if len(out) < 8 {

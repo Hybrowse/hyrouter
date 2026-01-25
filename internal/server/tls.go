@@ -8,6 +8,9 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"math/big"
+	"sort"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -19,12 +22,29 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 
 	nextProtos := s.cfg.TLS.ALPN
 	if len(nextProtos) == 0 {
-		nextProtos = []string{"hytale/1"}
+		nextProtos = []string{"hytale/*"}
+	}
+
+	allowHytaleAny := false
+	strictProtos := make([]string, 0, len(nextProtos))
+	for _, p := range nextProtos {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if p == "hytale/*" {
+			allowHytaleAny = true
+			continue
+		}
+		strictProtos = append(strictProtos, p)
+	}
+	if len(strictProtos) == 0 {
+		strictProtos = []string{"hytale/2", "hytale/1"}
 	}
 
 	baseConfig := &tls.Config{
 		Certificates: []tls.Certificate{cert},
-		NextProtos:   nextProtos,
+		NextProtos:   strictProtos,
 		ClientAuth:   tls.RequestClientCert,
 	}
 
@@ -41,18 +61,89 @@ func (s *Server) buildTLSConfig() (*tls.Config, error) {
 			"alpn_offered", info.SupportedProtos,
 		)
 
-		selected := nextProtos
-		if len(info.SupportedProtos) > 0 && !hasStringIntersection(nextProtos, info.SupportedProtos) {
-			selected = info.SupportedProtos
-		}
-
 		cfg := baseConfig.Clone()
 		cfg.GetConfigForClient = nil
-		cfg.NextProtos = selected
+		if allowHytaleAny {
+			selected := selectHytaleALPN(info.SupportedProtos)
+			if len(selected) > 0 {
+				cfg.NextProtos = selected
+			} else {
+				cfg.NextProtos = strictProtos
+			}
+		} else {
+			cfg.NextProtos = strictProtos
+		}
 		return cfg, nil
 	}
 
 	return baseConfig, nil
+}
+
+func selectHytaleALPN(offered []string) []string {
+	if len(offered) == 0 {
+		return nil
+	}
+
+	type item struct {
+		proto   string
+		version int
+		ok      bool
+	}
+
+	seen := map[string]struct{}{}
+	items := make([]item, 0, len(offered))
+	for _, p := range offered {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		if !strings.HasPrefix(p, "hytale/") {
+			continue
+		}
+		v, ok := parseHytaleVersion(p)
+		items = append(items, item{proto: p, version: v, ok: ok})
+	}
+	if len(items) == 0 {
+		return nil
+	}
+
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].ok && items[j].ok {
+			if items[i].version != items[j].version {
+				return items[i].version > items[j].version
+			}
+			return items[i].proto > items[j].proto
+		}
+		if items[i].ok != items[j].ok {
+			return items[i].ok
+		}
+		return items[i].proto > items[j].proto
+	})
+
+	out := make([]string, 0, len(items))
+	for _, it := range items {
+		out = append(out, it.proto)
+	}
+	return out
+}
+
+func parseHytaleVersion(alpn string) (int, bool) {
+	if !strings.HasPrefix(alpn, "hytale/") {
+		return 0, false
+	}
+	s := strings.TrimPrefix(alpn, "hytale/")
+	if s == "" {
+		return 0, false
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 func hasStringIntersection(a []string, b []string) bool {

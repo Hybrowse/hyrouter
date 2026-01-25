@@ -10,6 +10,7 @@ import (
 
 	"github.com/hybrowse/hyrouter/internal/routing"
 	"gopkg.in/yaml.v3"
+	"k8s.io/apimachinery/pkg/labels"
 )
 
 type Config struct {
@@ -21,6 +22,11 @@ type Config struct {
 	Plugins   []PluginConfig   `json:"plugins" yaml:"plugins"`
 	Discovery *DiscoveryConfig `json:"discovery" yaml:"discovery"`
 	Messages  MessagesConfig   `json:"messages" yaml:"messages"`
+	Logging   LoggingConfig    `json:"logging" yaml:"logging"`
+}
+
+type LoggingConfig struct {
+	LogClientIP bool `json:"log_client_ip" yaml:"log_client_ip"`
 }
 
 type ReferralConfig struct {
@@ -72,10 +78,13 @@ func Default() *Config {
 	return &Config{
 		Listen: ":5520",
 		TLS: TLSConfig{
-			ALPN: []string{"hytale/1"},
+			ALPN: []string{"hytale/*"},
 		},
 		QUIC: QUICConfig{
 			MaxIdleTimeout: "30s",
+		},
+		Logging: LoggingConfig{
+			LogClientIP: true,
 		},
 		Messages: MessagesConfig{
 			Disconnect: DisconnectMessagesConfig{
@@ -302,13 +311,16 @@ type KubernetesMetadataConfig struct {
 }
 
 type AgonesDiscoveryConfig struct {
-	Kubeconfig          string               `json:"kubeconfig" yaml:"kubeconfig"`
-	Namespaces          []string             `json:"namespaces" yaml:"namespaces"`
-	Mode                string               `json:"mode" yaml:"mode"`
-	AllocateMinInterval string               `json:"allocate_min_interval" yaml:"allocate_min_interval"`
-	State               []string             `json:"state" yaml:"state"`
-	Selector            *KubernetesSelector  `json:"selector" yaml:"selector"`
-	Port                KubernetesPortConfig `json:"port" yaml:"port"`
+	Kubeconfig          string                   `json:"kubeconfig" yaml:"kubeconfig"`
+	Namespaces          []string                 `json:"namespaces" yaml:"namespaces"`
+	Mode                string                   `json:"mode" yaml:"mode"`
+	AllocateMinInterval string                   `json:"allocate_min_interval" yaml:"allocate_min_interval"`
+	State               []string                 `json:"state" yaml:"state"`
+	Selector            *KubernetesSelector      `json:"selector" yaml:"selector"`
+	Metadata            KubernetesMetadataConfig `json:"metadata" yaml:"metadata"`
+	AddressSource       string                   `json:"address_source" yaml:"address_source"`
+	AddressPreference   []string                 `json:"address_preference" yaml:"address_preference"`
+	Port                KubernetesPortConfig     `json:"port" yaml:"port"`
 }
 
 func (c *DiscoveryConfig) Validate() error {
@@ -329,9 +341,45 @@ func (c *DiscoveryConfig) Validate() error {
 			if p.Kubernetes == nil {
 				return fmt.Errorf("discovery.providers[%d].kubernetes must be set", i)
 			}
+			for j, r := range p.Kubernetes.Resources {
+				if r.Selector != nil {
+					labelExpr := strings.TrimSpace(r.Selector.Labels)
+					if labelExpr != "" {
+						if _, err := labels.Parse(labelExpr); err != nil {
+							return fmt.Errorf("discovery.providers[%d].kubernetes.resources[%d].selector.labels is invalid: %w", i, j, err)
+						}
+					}
+					annExpr := strings.TrimSpace(r.Selector.Annotations)
+					if annExpr != "" {
+						if err := validateAnnotationSelector(annExpr); err != nil {
+							return fmt.Errorf("discovery.providers[%d].kubernetes.resources[%d].selector.annotations is invalid: %w", i, j, err)
+						}
+					}
+				}
+			}
 		case "agones":
 			if p.Agones == nil {
 				return fmt.Errorf("discovery.providers[%d].agones must be set", i)
+			}
+			if p.Agones.Selector != nil {
+				labelExpr := strings.TrimSpace(p.Agones.Selector.Labels)
+				if labelExpr != "" {
+					if _, err := labels.Parse(labelExpr); err != nil {
+						return fmt.Errorf("discovery.providers[%d].agones.selector.labels is invalid: %w", i, err)
+					}
+				}
+				annExpr := strings.TrimSpace(p.Agones.Selector.Annotations)
+				if annExpr != "" {
+					if err := validateAnnotationSelector(annExpr); err != nil {
+						return fmt.Errorf("discovery.providers[%d].agones.selector.annotations is invalid: %w", i, err)
+					}
+				}
+			}
+			addrSrc := strings.ToLower(strings.TrimSpace(p.Agones.AddressSource))
+			if addrSrc != "" {
+				if addrSrc != "address" && addrSrc != "addresses" {
+					return fmt.Errorf("discovery.providers[%d].agones.address_source must be one of: address, addresses", i)
+				}
 			}
 			if strings.TrimSpace(p.Agones.AllocateMinInterval) != "" {
 				if _, err := time.ParseDuration(p.Agones.AllocateMinInterval); err != nil {
@@ -340,6 +388,30 @@ func (c *DiscoveryConfig) Validate() error {
 			}
 		default:
 			return fmt.Errorf("discovery.providers[%d].type must be one of: kubernetes, agones", i)
+		}
+	}
+	return nil
+}
+
+func validateAnnotationSelector(expr string) error {
+	expr = strings.TrimSpace(expr)
+	if expr == "" {
+		return nil
+	}
+	parts := strings.Split(expr, ",")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		kv := strings.SplitN(p, "=", 2)
+		if len(kv) != 2 {
+			return fmt.Errorf("invalid selector token %q", p)
+		}
+		k := strings.TrimSpace(kv[0])
+		v := strings.TrimSpace(kv[1])
+		if k == "" || v == "" {
+			return fmt.Errorf("invalid selector token %q", p)
 		}
 	}
 	return nil

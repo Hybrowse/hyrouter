@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 
 	"github.com/hybrowse/hyrouter/internal/config"
 	"github.com/hybrowse/hyrouter/internal/plugins"
@@ -17,14 +18,17 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
-func (s *Server) acceptBidiStreams(ctx context.Context, conn *quic.Conn, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
+func (s *Server) acceptBidiStreams(ctx context.Context, conn *quic.Conn, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent, anyStreamAccepted *atomic.Bool) {
 	for {
 		stream, err := conn.AcceptStream(ctx)
 		if err != nil {
-			logger.Debug("accept bidi stream failed", "error", err)
+			logger.Debug("accept bidi stream failed", "error", err, "ctx_err", ctx.Err())
 			return
 		}
-		go s.handleBidiStream(ctx, stream, logger, decision, routeErr, baseEvent)
+		if anyStreamAccepted != nil {
+			anyStreamAccepted.Store(true)
+		}
+		go s.handleBidiStream(ctx, conn, stream, logger, decision, routeErr, baseEvent)
 	}
 }
 
@@ -38,36 +42,39 @@ func (s *Server) referralEnvelope(content []byte) ([]byte, error) {
 	return referral.EncodeV1(content, keyID, secret)
 }
 
-func (s *Server) acceptUniStreams(ctx context.Context, conn *quic.Conn, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
+func (s *Server) acceptUniStreams(ctx context.Context, conn *quic.Conn, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent, anyStreamAccepted *atomic.Bool) {
 	for {
 		stream, err := conn.AcceptUniStream(ctx)
 		if err != nil {
-			logger.Debug("accept uni stream failed", "error", err)
+			logger.Debug("accept uni stream failed", "error", err, "ctx_err", ctx.Err())
 			return
 		}
-		go s.handleUniStream(ctx, stream, logger, decision, routeErr, baseEvent)
+		if anyStreamAccepted != nil {
+			anyStreamAccepted.Store(true)
+		}
+		go s.handleUniStream(ctx, conn, stream, logger, decision, routeErr, baseEvent)
 	}
 }
 
-func (s *Server) handleBidiStream(ctx context.Context, stream *quic.Stream, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
+func (s *Server) handleBidiStream(ctx context.Context, conn *quic.Conn, stream *quic.Stream, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
 	streamLogger := logger.With(
 		"stream_id", stream.StreamID(),
 		"stream_type", "bidi",
 	)
 	streamLogger.Debug("accepted stream")
-	s.dumpFrames(ctx, stream, streamLogger, decision, routeErr, baseEvent)
+	s.dumpFrames(ctx, conn, stream, streamLogger, decision, routeErr, baseEvent)
 }
 
-func (s *Server) handleUniStream(ctx context.Context, stream *quic.ReceiveStream, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
+func (s *Server) handleUniStream(ctx context.Context, conn *quic.Conn, stream *quic.ReceiveStream, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
 	streamLogger := logger.With(
 		"stream_id", stream.StreamID(),
 		"stream_type", "uni",
 	)
 	streamLogger.Debug("accepted stream")
-	s.dumpFrames(ctx, stream, streamLogger, decision, routeErr, baseEvent)
+	s.dumpFrames(ctx, conn, stream, streamLogger, decision, routeErr, baseEvent)
 }
 
-func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
+func (s *Server) dumpFrames(ctx context.Context, conn *quic.Conn, r io.Reader, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
 	// Hytale packet framing: uint32le payloadLen + uint32le packetID + payload.
 	// Hyrouter only needs the first Connect packet to either deny the connection or send a referral.
 	buf := make([]byte, 4096)
@@ -75,6 +82,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 	referralSent := false
 	referralContent := []byte(nil)
 	backend := decision.Backend
+	loggedFirstPacket := false
 
 	for {
 		n, err := r.Read(buf)
@@ -113,9 +121,25 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 					"payload_sha256", hex.EncodeToString(sum[:]),
 					"payload_prefix_hex", hex.EncodeToString(payload[:prefixLen]),
 				)
+				if !loggedFirstPacket {
+					loggedFirstPacket = true
+					logger.Debug("rx first packet", "packet_id", packetID, "packet_name", packetName(packetID), "payload_len", payloadLen)
+				}
 
 				if packetID == 0 {
 					if info, ok := decodeConnectPayload(payload); ok {
+						if s.router != nil {
+							d, err := s.router.Decide(ctx, routing.Request{SNI: baseEvent.SNI, UUID: info.uuid, Username: info.username, Language: info.language})
+							if err == nil {
+								decision = d
+								routeErr = nil
+								backend = decision.Backend
+							} else {
+								routeErr = err
+								backend = routing.Backend{}
+								logger.Info("routing error", "error", err)
+							}
+						}
 						ev := baseEvent
 						ev.ProtocolHash = info.protocolHash
 						ev.ClientType = info.clientType
@@ -143,9 +167,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 								}
 								logger.Info("tx disconnect", "reason", res.DenyReason)
 								if c, ok := r.(interface{ Close() error }); ok {
-									if err := c.Close(); err != nil {
-										logger.Info("failed to close stream after disconnect", "error", err)
-									}
+									_ = c.Close()
 								}
 								return
 							}
@@ -155,31 +177,30 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 						logger.Info(
 							"rx connect",
 							"protocol_hash", info.protocolHash,
+							"protocol_crc", info.protocolCrc,
+							"protocol_build_number", info.protocolBuildNumber,
+							"client_version", info.clientVersion,
 							"client_type", info.clientType,
-							"uuid", info.uuid,
-							"username", info.username,
 							"language", info.language,
 							"identity_token_present", info.identityTokenPresent,
 							"referral_data_len", info.referralDataLen,
 							"referral_source", info.referralSource,
 						)
+						if info.uuid != "" || info.username != "" {
+							logger.Debug("connect identity", "uuid", info.uuid, "username", info.username)
+						}
 
 						if !referralSent && backend.Host != "" {
 							w, ok := r.(io.Writer)
 							if ok {
-								env, err := s.referralEnvelope(referralContent)
+								data, err := s.referralEnvelope(referralContent)
 								if err != nil {
 									logger.Info("failed to build referral envelope", "error", err)
-									// Always send referral_data: fall back to an empty envelope.
 									if fallback, ferr := s.referralEnvelope([]byte{}); ferr == nil {
-										env = fallback
+										data = fallback
 									}
 								}
-								refPayload, err := encodeClientReferralPayload(
-									backend.Host,
-									uint16(backend.Port),
-									env,
-								)
+								refPayload, err := encodeClientReferralPayload(backend.Host, uint16(backend.Port), data)
 								if err != nil {
 									logger.Info("failed to build referral", "error", err)
 								} else if err := writeFramedPacket(w, 18, refPayload); err != nil {
@@ -192,11 +213,12 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 										"port", backend.Port,
 										"matched", decision.Matched,
 										"route_index", decision.RouteIndex,
-										"content_len", len(referralContent),
+										"content_len", len(data),
 									)
 								}
 							}
 						}
+
 						if !referralSent && backend.Host == "" {
 							reason := s.disconnectReason(baseEvent.SNI, ev.Language, routeErr)
 							if reason != "" {
@@ -216,12 +238,81 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 								}
 								logger.Info("tx disconnect", "reason", reason)
 								if c, ok := r.(interface{ Close() error }); ok {
-									if err := c.Close(); err != nil {
-										logger.Info("failed to close stream after disconnect", "error", err)
-									}
+									_ = c.Close()
 								}
 								return
 							}
+						}
+					} else {
+						logger.Info("failed to decode connect", "payload_len", payloadLen)
+
+						if s.router != nil {
+							d, err := s.router.Decide(ctx, routing.Request{SNI: baseEvent.SNI})
+							if err == nil {
+								decision = d
+								routeErr = nil
+								backend = decision.Backend
+							} else {
+								routeErr = err
+								backend = routing.Backend{}
+								logger.Info("routing error", "error", err)
+							}
+						}
+
+						if !referralSent && backend.Host != "" {
+							w, ok := r.(io.Writer)
+							if ok {
+								data := []byte(nil)
+								if len(referralContent) > 0 {
+									env, err := s.referralEnvelope(referralContent)
+									if err != nil {
+										logger.Info("failed to build referral envelope", "error", err)
+										if fallback, ferr := s.referralEnvelope([]byte{}); ferr == nil {
+											env = fallback
+										}
+									}
+									data = env
+								}
+								refPayload, err := encodeClientReferralPayload(backend.Host, uint16(backend.Port), data)
+								if err != nil {
+									logger.Info("failed to build referral", "error", err)
+								} else if err := writeFramedPacket(w, 18, refPayload); err != nil {
+									logger.Info("failed to send referral", "error", err)
+								} else {
+									referralSent = true
+									logger.Info(
+										"tx referral",
+										"host", backend.Host,
+										"port", backend.Port,
+										"matched", decision.Matched,
+										"route_index", decision.RouteIndex,
+										"content_len", len(data),
+									)
+								}
+							}
+						}
+
+						if !referralSent && backend.Host == "" {
+							reason := s.disconnectReason(baseEvent.SNI, "", routeErr)
+							w, ok := r.(io.Writer)
+							if !ok {
+								logger.Info("failed to send disconnect", "error", "stream is not writable")
+								return
+							}
+							dp, derr := encodeDisconnectPayload(reason)
+							if derr != nil {
+								logger.Info("failed to build disconnect", "error", derr)
+								return
+							}
+							if err := writeFramedPacket(w, 1, dp); err != nil {
+								logger.Info("failed to send disconnect", "error", err)
+								return
+							}
+							logger.Info("tx disconnect", "reason", reason)
+							if c, ok := r.(interface{ Close() error }); ok {
+								_ = c.Close()
+							}
+							return
 						}
 					}
 				}

@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -79,7 +80,8 @@ func (p *agonesProvider) Start(ctx context.Context) error {
 			selector = strings.TrimSpace(p.cfg.Selector.Labels)
 			if selector != "" {
 				if _, err := labels.Parse(selector); err != nil {
-					selector = ""
+					p.startErr = fmt.Errorf("discovery provider %q: invalid selector.labels: %w", p.name, err)
+					return
 				}
 			}
 		}
@@ -169,7 +171,7 @@ func (p *agonesProvider) rebuild() {
 				continue
 			}
 		}
-		b, ok := toBackendFromGameServer(u, p.cfg.Port, allowedStates)
+		b, ok := toBackendFromGameServer(u, p.cfg, allowedStates)
 		if !ok {
 			continue
 		}
@@ -231,7 +233,7 @@ func (p *agonesProvider) allocate(ctx context.Context) ([]routing.Backend, error
 		return nil, err
 	}
 	status, _, _ := unstructured.NestedMap(created.Object, "status")
-	addr, _, _ := unstructured.NestedString(status, "address")
+	addr := resolveAgonesAddress(status, p.cfg)
 	ports, _, _ := unstructured.NestedSlice(status, "ports")
 	port := resolveAgonesPorts(ports, p.cfg.Port)
 	if addr == "" || port == 0 {
@@ -274,7 +276,7 @@ func (p *agonesProvider) reserveAllocateSlot(minInterval time.Duration) time.Dur
 	return wait
 }
 
-func toBackendFromGameServer(u *unstructured.Unstructured, portCfg config.KubernetesPortConfig, allowedStates map[string]struct{}) (routing.Backend, bool) {
+func toBackendFromGameServer(u *unstructured.Unstructured, cfg *config.AgonesDiscoveryConfig, allowedStates map[string]struct{}) (routing.Backend, bool) {
 	status, _, _ := unstructured.NestedMap(u.Object, "status")
 	state, _, _ := unstructured.NestedString(status, "state")
 	stateLower := strings.ToLower(strings.TrimSpace(state))
@@ -286,8 +288,12 @@ func toBackendFromGameServer(u *unstructured.Unstructured, portCfg config.Kubern
 			return routing.Backend{}, false
 		}
 	}
-	addr, _, _ := unstructured.NestedString(status, "address")
+	addr := resolveAgonesAddress(status, cfg)
 	ports, _, _ := unstructured.NestedSlice(status, "ports")
+	portCfg := config.KubernetesPortConfig{}
+	if cfg != nil {
+		portCfg = cfg.Port
+	}
 	port := resolveAgonesPorts(ports, portCfg)
 	if addr == "" || port == 0 {
 		return routing.Backend{}, false
@@ -296,6 +302,12 @@ func toBackendFromGameServer(u *unstructured.Unstructured, portCfg config.Kubern
 	meta := map[string]string{}
 	fillK8sMeta(meta, u.GetNamespace(), u.GetName(), "")
 	meta["gameserver.state"] = state
+	if v := u.GetLabels()["hyrouter/weight"]; v != "" {
+		meta["label.hyrouter/weight"] = v
+	}
+	if v := u.GetAnnotations()["hyrouter/weight"]; v != "" {
+		meta["annotation.hyrouter/weight"] = v
+	}
 
 	counters, _, _ := unstructured.NestedMap(status, "counters")
 	for name, raw := range counters {
@@ -311,14 +323,104 @@ func toBackendFromGameServer(u *unstructured.Unstructured, portCfg config.Kubern
 		}
 	}
 
-	for k, v := range u.GetLabels() {
-		meta["label."+k] = v
+	if cfg != nil {
+		copySelectedLabels(meta, u.GetLabels(), cfg.Metadata.IncludeLabels)
+		copySelectedAnnotations(meta, u.GetAnnotations(), cfg.Metadata.IncludeAnnotations)
 	}
-	for k, v := range u.GetAnnotations() {
-		meta["annotation."+k] = v
-	}
+	appendAgonesLists(meta, status)
 
 	return routing.Backend{Host: addr, Port: port, Meta: meta}, true
+}
+
+func resolveAgonesAddress(status map[string]interface{}, cfg *config.AgonesDiscoveryConfig) string {
+	if status == nil {
+		return ""
+	}
+	addr, _, _ := unstructured.NestedString(status, "address")
+	addrSrc := ""
+	pref := []string(nil)
+	if cfg != nil {
+		addrSrc = strings.ToLower(strings.TrimSpace(cfg.AddressSource))
+		pref = cfg.AddressPreference
+	}
+	if addrSrc == "" {
+		if len(pref) == 0 {
+			return addr
+		}
+		addrSrc = "addresses"
+	}
+	if addrSrc == "address" {
+		return addr
+	}
+
+	addrs, _, _ := unstructured.NestedSlice(status, "addresses")
+	if len(addrs) == 0 {
+		return addr
+	}
+	byType := map[string]string{}
+	order := make([]string, 0, len(addrs))
+	for _, a := range addrs {
+		m, ok := a.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		t, _ := m["type"].(string)
+		v, _ := m["address"].(string)
+		t = strings.TrimSpace(t)
+		v = strings.TrimSpace(v)
+		if t == "" || v == "" {
+			continue
+		}
+		if _, exists := byType[t]; !exists {
+			order = append(order, t)
+		}
+		byType[t] = v
+	}
+	for _, t := range pref {
+		t = strings.TrimSpace(t)
+		if t == "" {
+			continue
+		}
+		if v, ok := byType[t]; ok && v != "" {
+			return v
+		}
+	}
+	if addrSrc == "addresses" {
+		for _, t := range order {
+			if v := byType[t]; v != "" {
+				return v
+			}
+		}
+	}
+	return addr
+}
+
+func appendAgonesLists(meta map[string]string, status map[string]interface{}) {
+	if meta == nil || status == nil {
+		return
+	}
+	lists, _, _ := unstructured.NestedMap(status, "lists")
+	for name, raw := range lists {
+		m, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		vals, _, _ := unstructured.NestedSlice(m, "values")
+		if len(vals) > 0 {
+			xs := make([]string, 0, len(vals))
+			for _, v := range vals {
+				if s, ok := v.(string); ok {
+					xs = append(xs, s)
+				}
+			}
+			if b, err := json.Marshal(xs); err == nil {
+				meta["list."+name+".values"] = string(b)
+			}
+		}
+		if capAny, ok := m["capacity"]; ok {
+			meta["list."+name+".capacity"] = fmt.Sprint(capAny)
+		}
+	}
 }
 
 func resolveAgonesPorts(ports []interface{}, cfg config.KubernetesPortConfig) int {

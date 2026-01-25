@@ -57,7 +57,27 @@ func TestBuildTLSConfig_SelectsALPN(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetConfigForClient: %v", err)
 	}
-	if len(selected.NextProtos) != 1 || selected.NextProtos[0] != "other/1" {
+	if len(selected.NextProtos) != 2 || selected.NextProtos[0] != "hytale/2" || selected.NextProtos[1] != "hytale/1" {
+		t.Fatalf("unexpected selected protos: %#v", selected.NextProtos)
+	}
+}
+
+func TestBuildTLSConfig_WildcardALPN(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
+	c := config.Default()
+	c.TLS.ALPN = []string{"hytale/*"}
+	s := &Server{cfg: c, logger: logger}
+	cfg, err := s.buildTLSConfig()
+	if err != nil {
+		t.Fatalf("buildTLSConfig: %v", err)
+	}
+
+	chi := &tls.ClientHelloInfo{ServerName: "localhost", SupportedProtos: []string{"hytale/1", "hytale/7", "other/1"}}
+	selected, err := cfg.GetConfigForClient(chi)
+	if err != nil {
+		t.Fatalf("GetConfigForClient: %v", err)
+	}
+	if len(selected.NextProtos) != 2 || selected.NextProtos[0] != "hytale/7" || selected.NextProtos[1] != "hytale/1" {
 		t.Fatalf("unexpected selected protos: %#v", selected.NextProtos)
 	}
 }

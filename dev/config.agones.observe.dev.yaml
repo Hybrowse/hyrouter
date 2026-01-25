@@ -2,10 +2,13 @@ listen: ":5520"
 
 tls:
   alpn:
-    - hytale/1
+    - hytale/*
 
 quic:
   max_idle_timeout: 30s
+
+logging:
+  log_client_ip: true
 
 messages:
   disconnect:
@@ -60,6 +63,12 @@ discovery:
         selector:
           labels: "agones.dev/fleet=hytale"
           annotations: "hyrouter/enabled=true"
+        metadata:
+          include_labels:
+            - agones.dev/fleet
+          include_annotations:
+            - agones.dev/sdk-game-start
+            - agones.dev/sdk-whitelist-enabled
         port:
           name: gameport
 
@@ -69,11 +78,11 @@ routing:
         hostname: "play.example.com"
       pool:
         strategy: round_robin
+        sort:
+          - key: counter:players.count
+            order: asc
+            type: number
+        limit: 25
         discovery:
           provider: agones
           mode: prefer
-          limit: 25
-          sort:
-            - key: counter:players.count
-              order: asc
-              type: number

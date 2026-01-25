@@ -137,35 +137,49 @@ func TestEndToEndReferralRedirect(t *testing.T) {
 		t.Fatalf("Write connect frame: %v", err)
 	}
 
-	buf := make([]byte, 4096)
-	n, err := stream.Read(buf)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
-	if n < 8 {
-		t.Fatalf("short read: %d", n)
-	}
-
-	payloadLen := int(binary.LittleEndian.Uint32(buf[0:4]))
-	packetID := int(binary.LittleEndian.Uint32(buf[4:8]))
-	if packetID != 18 {
-		t.Fatalf("expected referral packet 18, got %d", packetID)
-	}
-	if 8+payloadLen > n {
-		deadline := time.Now().Add(2 * time.Second)
-		for 8+payloadLen > n && time.Now().Before(deadline) {
-			more, e := stream.Read(buf[n:])
-			n += more
-			if e != nil {
+	out := make([]byte, 0, 4096)
+	tmp := make([]byte, 4096)
+	deadline := time.Now().Add(2 * time.Second)
+	readErr := error(nil)
+	for {
+		if len(out) >= 8 {
+			pl := int(binary.LittleEndian.Uint32(out[0:4]))
+			if pl >= 0 && len(out) >= 8+pl {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			if readErr != nil {
+				t.Fatalf("timeout while reading referral frame: %v", readErr)
+			}
+			t.Fatalf("timeout while reading referral frame")
+		}
+		n, err := stream.Read(tmp)
+		if n > 0 {
+			out = append(out, tmp[:n]...)
+		}
+		if err != nil {
+			// Server may close the QUIC connection immediately after sending the referral.
+			readErr = err
+			if n == 0 {
 				break
 			}
 		}
 	}
-	if 8+payloadLen > n {
-		t.Fatalf("incomplete referral frame: have %d want %d", n, 8+payloadLen)
+	if len(out) < 8 {
+		t.Fatalf("short read: %d (%v)", len(out), readErr)
 	}
 
-	payload := buf[8 : 8+payloadLen]
+	payloadLen := int(binary.LittleEndian.Uint32(out[0:4]))
+	packetID := int(binary.LittleEndian.Uint32(out[4:8]))
+	if packetID != 18 {
+		t.Fatalf("expected referral packet 18, got %d", packetID)
+	}
+	if 8+payloadLen > len(out) {
+		t.Fatalf("incomplete referral frame: have %d want %d (%v)", len(out), 8+payloadLen, readErr)
+	}
+
+	payload := out[8 : 8+payloadLen]
 
 	nullBits := payload[0]
 	if nullBits&0x01 == 0 {
@@ -189,26 +203,26 @@ func TestEndToEndReferralRedirect(t *testing.T) {
 		t.Fatalf("port=%d", ha.Port)
 	}
 
-	if nullBits&0x02 == 0 {
-		t.Fatalf("expected data bit")
-	}
-	dataOff := int32(binary.LittleEndian.Uint32(payload[5:9]))
-	if dataOff < 0 {
-		t.Fatalf("dataOff=%d", dataOff)
-	}
-	pos := 9 + int(dataOff)
-	ln, sz, ok := readVarInt(payload, pos)
-	if !ok {
-		t.Fatalf("readVarInt")
-	}
-	start := pos + sz
-	end := start + ln
-	if end > len(payload) {
-		t.Fatalf("short data")
-	}
-	data := payload[start:end]
-	if _, err := referral.Parse(data); err != nil {
-		t.Fatalf("parse envelope: %v", err)
+	// Referral data may be omitted entirely.
+	if nullBits&0x02 != 0 {
+		dataOff := int32(binary.LittleEndian.Uint32(payload[5:9]))
+		if dataOff < 0 {
+			t.Fatalf("dataOff=%d", dataOff)
+		}
+		pos := 9 + int(dataOff)
+		ln, sz, ok := readVarInt(payload, pos)
+		if !ok {
+			t.Fatalf("readVarInt")
+		}
+		start := pos + sz
+		end := start + ln
+		if end > len(payload) {
+			t.Fatalf("short data")
+		}
+		data := payload[start:end]
+		if _, err := referral.Parse(data); err != nil {
+			t.Fatalf("parse envelope: %v", err)
+		}
 	}
 }
 

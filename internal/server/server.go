@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hybrowse/hyrouter/internal/config"
@@ -155,23 +156,17 @@ func (s *Server) Run(ctx context.Context) error {
 func (s *Server) handleConn(ctx context.Context, conn *quic.Conn) {
 	state := conn.ConnectionState()
 
-	logger := s.logger.With(
-		"remote_addr", conn.RemoteAddr().String(),
+	attrs := []any{
 		"sni", state.TLS.ServerName,
 		"alpn", state.TLS.NegotiatedProtocol,
-	)
+	}
+	if s != nil && s.cfg != nil && s.cfg.Logging.LogClientIP {
+		attrs = append(attrs, "remote_addr", conn.RemoteAddr().String())
+	}
+	logger := s.logger.With(attrs...)
 
 	decision := routing.Decision{Matched: false, RouteIndex: -1, SelectedIndex: -1}
 	routeErr := error(nil)
-	if s.router != nil {
-		d, err := s.router.Decide(conn.Context(), routing.Request{SNI: state.TLS.ServerName})
-		if err == nil {
-			decision = d
-		} else {
-			routeErr = err
-			logger.Info("routing error", "error", err)
-		}
-	}
 
 	fp := ""
 	if len(state.TLS.PeerCertificates) > 0 {
@@ -182,16 +177,20 @@ func (s *Server) handleConn(ctx context.Context, conn *quic.Conn) {
 	logger.Info(
 		"accepted connection",
 		"client_cert_present", fp != "",
-		"client_cert_fingerprint", fp,
 	)
+	if fp != "" {
+		logger.Debug("client certificate", "client_cert_fingerprint", fp)
+	}
 
 	connCtx := conn.Context()
-	go s.acceptBidiStreams(connCtx, conn, logger, decision, routeErr, baseEvent)
-	go s.acceptUniStreams(connCtx, conn, logger, decision, routeErr, baseEvent)
+	anyStreamAccepted := &atomic.Bool{}
+	go s.acceptBidiStreams(connCtx, conn, logger, decision, routeErr, baseEvent, anyStreamAccepted)
+	go s.acceptUniStreams(connCtx, conn, logger, decision, routeErr, baseEvent, anyStreamAccepted)
 
 	select {
 	case <-ctx.Done():
 		_ = conn.CloseWithError(0, "shutdown")
 	case <-connCtx.Done():
+		logger.Debug("connection closed", "error", connCtx.Err(), "any_stream_accepted", anyStreamAccepted.Load())
 	}
 }
