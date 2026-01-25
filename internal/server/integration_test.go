@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hybrowse/hyrouter/internal/config"
+	"github.com/hybrowse/hyrouter/internal/referral"
 	"github.com/hybrowse/hyrouter/internal/routing"
 	"github.com/quic-go/quic-go"
 )
@@ -167,7 +168,7 @@ func TestEndToEndReferralRedirect(t *testing.T) {
 	payload := buf[8 : 8+payloadLen]
 
 	nullBits := payload[0]
-	if nullBits != 0x01 {
+	if nullBits&0x01 == 0 {
 		t.Fatalf("nullBits=%02x", nullBits)
 	}
 
@@ -186,6 +187,28 @@ func TestEndToEndReferralRedirect(t *testing.T) {
 	}
 	if ha.Port != 5520 {
 		t.Fatalf("port=%d", ha.Port)
+	}
+
+	if nullBits&0x02 == 0 {
+		t.Fatalf("expected data bit")
+	}
+	dataOff := int32(binary.LittleEndian.Uint32(payload[5:9]))
+	if dataOff < 0 {
+		t.Fatalf("dataOff=%d", dataOff)
+	}
+	pos := 9 + int(dataOff)
+	ln, sz, ok := readVarInt(payload, pos)
+	if !ok {
+		t.Fatalf("readVarInt")
+	}
+	start := pos + sz
+	end := start + ln
+	if end > len(payload) {
+		t.Fatalf("short data")
+	}
+	data := payload[start:end]
+	if _, err := referral.Parse(data); err != nil {
+		t.Fatalf("parse envelope: %v", err)
 	}
 }
 

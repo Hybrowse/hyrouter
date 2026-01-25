@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/hybrowse/hyrouter/internal/config"
 	"github.com/hybrowse/hyrouter/internal/discovery"
 	"github.com/hybrowse/hyrouter/internal/plugins"
+	"github.com/hybrowse/hyrouter/internal/referral"
 	"github.com/hybrowse/hyrouter/internal/routing"
 	"github.com/quic-go/quic-go"
 )
@@ -22,6 +24,9 @@ type Server struct {
 	initErr    error
 	pluginCfgs []config.PluginConfig
 	plugins    *plugins.Manager
+
+	referralKeyID  uint8
+	referralSecret []byte
 }
 
 func New(cfg *config.Config, logger *slog.Logger) *Server {
@@ -30,6 +35,8 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 	var pcfgs []config.PluginConfig
 	var dm *discovery.Manager
 	var initErr error
+	var refKeyID uint8
+	var refSecret []byte
 	if cfg != nil {
 		se = routing.NewStaticEngine(cfg.Routing)
 		r = se
@@ -54,8 +61,21 @@ func New(cfg *config.Config, logger *slog.Logger) *Server {
 				}
 			}
 		}
+		if cfg.Referral != nil {
+			refKeyID = cfg.Referral.KeyID
+			if strings.TrimSpace(cfg.Referral.HMACSecret) != "" {
+				b, err := referral.DecodeSecret(cfg.Referral.HMACSecret)
+				if err != nil {
+					if initErr == nil {
+						initErr = fmt.Errorf("invalid referral.hmac_secret: %w", err)
+					}
+				} else {
+					refSecret = b
+				}
+			}
+		}
 	}
-	return &Server{cfg: cfg, logger: logger, router: r, pluginCfgs: pcfgs, discovery: dm, initErr: initErr}
+	return &Server{cfg: cfg, logger: logger, router: r, pluginCfgs: pcfgs, discovery: dm, initErr: initErr, referralKeyID: refKeyID, referralSecret: refSecret}
 }
 
 func (s *Server) initPlugins(ctx context.Context) error {

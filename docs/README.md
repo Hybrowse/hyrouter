@@ -7,6 +7,7 @@ This folder contains the detailed documentation for Hyrouter.
 - [`configuration.md`](configuration.md) – configuration file schema (YAML / JSON)
 - [`routing.md`](routing.md) – static routing rules (SNI-based)
 - [`plugin-configuration.md`](plugin-configuration.md) – plugin configuration, ordering and stages
+- [`referral-envelope.md`](referral-envelope.md) – referral envelope format and signing
 
 ## Internals
 

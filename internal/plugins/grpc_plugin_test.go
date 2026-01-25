@@ -24,7 +24,7 @@ func (s *testGRPCServer) OnConnect(_ context.Context, req *ConnectRequest) (*Con
 		resp.DenyReason = "no"
 		return resp, nil
 	}
-	resp.ReferralData = []byte("x")
+	resp.ReferralContent = []byte("x")
 	return resp, nil
 }
 
@@ -53,8 +53,8 @@ func TestGRPCPlugin_OnConnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OnConnect: %v", err)
 	}
-	if string(resp.ReferralData) != "x" {
-		t.Fatalf("ref=%q", string(resp.ReferralData))
+	if string(resp.ReferralContent) != "x" {
+		t.Fatalf("ref=%q", string(resp.ReferralContent))
 	}
 
 	resp, err = p.OnConnect(context.Background(), ConnectRequest{Event: ConnectEvent{Username: "deny"}})

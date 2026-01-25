@@ -19,7 +19,7 @@ type testPlugin struct {
 func TestManagerNil(t *testing.T) {
 	var m *Manager
 	out := m.ApplyOnConnect(context.Background(), ConnectEvent{}, routing.Decision{Backend: routing.Backend{Host: "h", Port: 1}}, []byte("x"))
-	if out.Backend.Host != "h" || string(out.ReferralData) != "x" {
+	if out.Backend.Host != "h" || string(out.ReferralContent) != "x" {
 		t.Fatalf("out=%#v", out)
 	}
 	m.Close(context.Background())
@@ -39,7 +39,7 @@ func (p *testPlugin) Close(ctx context.Context) error {
 func TestManagerApplyOnConnect(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{}))
 	m := NewManager(logger, []Plugin{
-		&testPlugin{name: "a", resp: ConnectResponse{ReferralData: []byte("x")}},
+		&testPlugin{name: "a", resp: ConnectResponse{ReferralContent: []byte("x")}},
 		&testPlugin{name: "b", resp: ConnectResponse{Backend: &routing.Backend{Host: "h", Port: 1}}},
 	})
 
@@ -50,8 +50,8 @@ func TestManagerApplyOnConnect(t *testing.T) {
 	if out.Backend.Host != "h" || out.Backend.Port != 1 {
 		t.Fatalf("backend=%#v", out.Backend)
 	}
-	if string(out.ReferralData) != "x" {
-		t.Fatalf("data=%q", string(out.ReferralData))
+	if string(out.ReferralContent) != "x" {
+		t.Fatalf("content=%q", string(out.ReferralContent))
 	}
 }
 

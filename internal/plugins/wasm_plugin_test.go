@@ -55,7 +55,7 @@ func Alloc(size uint32) uint32 {
 func OnConnect(ptr uint32, length uint32) uint64 {
 	in := unsafe.Slice((*byte)(unsafe.Pointer(uintptr(ptr))), length)
 	_ = in
-	out := []byte(` + "`" + `{"referral_data":"eA=="}` + "`" + `)
+	out := []byte(` + "`" + `{"referral_content":"eA=="}` + "`" + `)
 	p := Alloc(uint32(len(out)))
 	copy(unsafe.Slice((*byte)(unsafe.Pointer(uintptr(p))), uint32(len(out))), out)
 	return (uint64(p) << 32) | uint64(len(out))
@@ -89,8 +89,8 @@ func main() {}
 	if err != nil {
 		t.Fatalf("OnConnect: %v", err)
 	}
-	if string(resp.ReferralData) != "x" {
-		t.Fatalf("ref=%q", string(resp.ReferralData))
+	if string(resp.ReferralContent) != "x" {
+		t.Fatalf("ref=%q", string(resp.ReferralContent))
 	}
 }
 

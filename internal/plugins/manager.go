@@ -16,26 +16,26 @@ type Manager struct {
 }
 
 type ApplyResult struct {
-	Denied        bool
-	DenyReason    string
-	Strategy      string
-	Candidates    []routing.Backend
-	SelectedIndex int
-	Backend       routing.Backend
-	ReferralData  []byte
+	Denied          bool
+	DenyReason      string
+	Strategy        string
+	Candidates      []routing.Backend
+	SelectedIndex   int
+	Backend         routing.Backend
+	ReferralContent []byte
 }
 
 func NewManager(logger *slog.Logger, plugins []Plugin) *Manager {
 	return &Manager{plugins: plugins, logger: logger}
 }
 
-func (m *Manager) ApplyOnConnect(ctx context.Context, ev ConnectEvent, decision routing.Decision, referralData []byte) ApplyResult {
+func (m *Manager) ApplyOnConnect(ctx context.Context, ev ConnectEvent, decision routing.Decision, referralContent []byte) ApplyResult {
 	res := ApplyResult{
-		Strategy:      decision.Strategy,
-		Candidates:    decision.Candidates,
-		SelectedIndex: decision.SelectedIndex,
-		Backend:       decision.Backend,
-		ReferralData:  referralData,
+		Strategy:        decision.Strategy,
+		Candidates:      decision.Candidates,
+		SelectedIndex:   decision.SelectedIndex,
+		Backend:         decision.Backend,
+		ReferralContent: referralContent,
 	}
 	if m == nil {
 		return res
@@ -43,12 +43,12 @@ func (m *Manager) ApplyOnConnect(ctx context.Context, ev ConnectEvent, decision 
 	for _, p := range m.plugins {
 		pctx, cancel := context.WithTimeout(ctx, pluginCallTimeout)
 		pr, err := p.OnConnect(pctx, ConnectRequest{
-			Event:         ev,
-			Strategy:      res.Strategy,
-			Candidates:    res.Candidates,
-			SelectedIndex: res.SelectedIndex,
-			Backend:       res.Backend,
-			ReferralData:  res.ReferralData,
+			Event:           ev,
+			Strategy:        res.Strategy,
+			Candidates:      res.Candidates,
+			SelectedIndex:   res.SelectedIndex,
+			Backend:         res.Backend,
+			ReferralContent: res.ReferralContent,
 		})
 		cancel()
 		if err != nil {
@@ -89,8 +89,8 @@ func (m *Manager) ApplyOnConnect(ctx context.Context, ev ConnectEvent, decision 
 			res.SelectedIndex = 0
 			res.Backend = res.Candidates[0]
 		}
-		if pr.ReferralData != nil {
-			res.ReferralData = pr.ReferralData
+		if pr.ReferralContent != nil {
+			res.ReferralContent = pr.ReferralContent
 		}
 	}
 	return res

@@ -28,7 +28,7 @@ The JSON types are defined in `internal/plugins/types.go`.
 - `candidates` – candidate backends for the current route/pool
 - `selected_index` – index chosen by Hyrouter
 - `backend` – the selected backend (`host`, `port`, `weight`, `meta`)
-- `referral_data` – current referral payload (optional)
+- `referral_content` – current referral content (optional)
 
 ### ConnectResponse
 
@@ -37,7 +37,9 @@ The JSON types are defined in `internal/plugins/types.go`.
 - `candidates` (list, optional)
 - `selected_index` (int, optional)
 - `backend` (object, optional)
-- `referral_data` (bytes, optional)
+- `referral_content` (bytes, optional)
+
+Hyrouter wraps the content into a fixed, versioned referral envelope before sending it to the client.
 
 ## gRPC plugins
 

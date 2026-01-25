@@ -10,6 +10,7 @@ import (
 
 	"github.com/hybrowse/hyrouter/internal/config"
 	"github.com/hybrowse/hyrouter/internal/plugins"
+	"github.com/hybrowse/hyrouter/internal/referral"
 	"github.com/hybrowse/hyrouter/internal/routing"
 )
 
@@ -208,11 +209,11 @@ func (m *mutatePlugin) Name() string { return "mut" }
 func (m *mutatePlugin) OnConnect(ctx context.Context, req plugins.ConnectRequest) (plugins.ConnectResponse, error) {
 	_ = ctx
 	_ = req
-	return plugins.ConnectResponse{ReferralData: []byte{1, 2, 3}}, nil
+	return plugins.ConnectResponse{ReferralContent: []byte{1, 2, 3}}, nil
 }
 func (m *mutatePlugin) Close(ctx context.Context) error { return nil }
 
-func TestDumpFrames_PluginMutatesReferralData(t *testing.T) {
+func TestDumpFrames_PluginMutatesReferralContent(t *testing.T) {
 	connectPayload := buildConnectPayloadForTest(
 		"6708f121966c1c443f4b0eb525b2f81d0a8dc61f5003a692a8fa157e5e02cea9",
 		0,
@@ -253,12 +254,19 @@ func TestDumpFrames_PluginMutatesReferralData(t *testing.T) {
 	varStart := 9
 	pos := varStart + dataOffset
 	l, sz, ok := readVarInt(p, pos)
-	if !ok || l != 3 {
+	if !ok || l <= 0 {
 		t.Fatalf("len=%d ok=%v", l, ok)
 	}
+	if pos+sz+l > len(p) {
+		t.Fatalf("short data")
+	}
 	data := p[pos+sz : pos+sz+l]
-	if len(data) != 3 || data[0] != 1 || data[1] != 2 || data[2] != 3 {
-		t.Fatalf("data=%v", data)
+	env, err := referral.Parse(data)
+	if err != nil {
+		t.Fatalf("parse envelope: %v", err)
+	}
+	if len(env.Content) != 3 || env.Content[0] != 1 || env.Content[1] != 2 || env.Content[2] != 3 {
+		t.Fatalf("content=%v", env.Content)
 	}
 }
 
@@ -321,6 +329,32 @@ func TestDumpFrames_SendsReferralOnConnect(t *testing.T) {
 	}
 	if binary.LittleEndian.Uint32(out[4:8]) != 18 {
 		t.Fatalf("expected packet 18, got %d", binary.LittleEndian.Uint32(out[4:8]))
+	}
+	payloadLen := int(binary.LittleEndian.Uint32(out[0:4]))
+	p := out[8 : 8+payloadLen]
+	if p[0]&0x02 == 0 {
+		t.Fatalf("expected data bit")
+	}
+	dataOffset := int(int32(binary.LittleEndian.Uint32(p[5:9])))
+	if dataOffset < 0 {
+		t.Fatalf("expected data offset")
+	}
+	varStart := 9
+	pos := varStart + dataOffset
+	l, sz, ok := readVarInt(p, pos)
+	if !ok || l < 0 {
+		t.Fatalf("len=%d ok=%v", l, ok)
+	}
+	if pos+sz+l > len(p) {
+		t.Fatalf("short data")
+	}
+	data := p[pos+sz : pos+sz+l]
+	env, err := referral.Parse(data)
+	if err != nil {
+		t.Fatalf("parse envelope: %v", err)
+	}
+	if len(env.Content) != 0 {
+		t.Fatalf("content=%v", env.Content)
 	}
 }
 

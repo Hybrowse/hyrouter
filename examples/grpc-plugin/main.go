@@ -30,7 +30,7 @@ func (s *server) OnConnect(ctx context.Context, req *plugins.ConnectRequest) (*p
 		resp.Backend = &routing.Backend{Host: "play.hyvane.com", Port: 5520}
 	}
 
-	resp.ReferralData = []byte("grpc-plugin")
+	resp.ReferralContent = []byte("grpc-plugin")
 	return resp, nil
 }
 

@@ -12,6 +12,7 @@ import (
 
 	"github.com/hybrowse/hyrouter/internal/config"
 	"github.com/hybrowse/hyrouter/internal/plugins"
+	"github.com/hybrowse/hyrouter/internal/referral"
 	"github.com/hybrowse/hyrouter/internal/routing"
 	"github.com/quic-go/quic-go"
 )
@@ -25,6 +26,16 @@ func (s *Server) acceptBidiStreams(ctx context.Context, conn *quic.Conn, logger 
 		}
 		go s.handleBidiStream(ctx, stream, logger, decision, routeErr, baseEvent)
 	}
+}
+
+func (s *Server) referralEnvelope(content []byte) ([]byte, error) {
+	keyID := uint8(0)
+	secret := []byte(nil)
+	if s != nil && s.referralSecret != nil {
+		secret = s.referralSecret
+		keyID = s.referralKeyID
+	}
+	return referral.EncodeV1(content, keyID, secret)
 }
 
 func (s *Server) acceptUniStreams(ctx context.Context, conn *quic.Conn, logger *slog.Logger, decision routing.Decision, routeErr error, baseEvent plugins.ConnectEvent) {
@@ -62,7 +73,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 	buf := make([]byte, 4096)
 	var pending []byte
 	referralSent := false
-	referralData := []byte(nil)
+	referralContent := []byte(nil)
 	backend := decision.Backend
 
 	for {
@@ -113,7 +124,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 						ev.Language = info.language
 						ev.IdentityTokenPresent = info.identityTokenPresent
 						if s.plugins != nil {
-							res := s.plugins.ApplyOnConnect(ctx, ev, decision, referralData)
+							res := s.plugins.ApplyOnConnect(ctx, ev, decision, referralContent)
 							if res.Denied {
 								// Deny is terminal: send Disconnect and close the stream so the client can progress.
 								w, ok := r.(io.Writer)
@@ -139,7 +150,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 								return
 							}
 							backend = res.Backend
-							referralData = res.ReferralData
+							referralContent = res.ReferralContent
 						}
 						logger.Info(
 							"rx connect",
@@ -156,10 +167,18 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 						if !referralSent && backend.Host != "" {
 							w, ok := r.(io.Writer)
 							if ok {
+								env, err := s.referralEnvelope(referralContent)
+								if err != nil {
+									logger.Info("failed to build referral envelope", "error", err)
+									// Always send referral_data: fall back to an empty envelope.
+									if fallback, ferr := s.referralEnvelope([]byte{}); ferr == nil {
+										env = fallback
+									}
+								}
 								refPayload, err := encodeClientReferralPayload(
 									backend.Host,
 									uint16(backend.Port),
-									referralData,
+									env,
 								)
 								if err != nil {
 									logger.Info("failed to build referral", "error", err)
@@ -173,7 +192,7 @@ func (s *Server) dumpFrames(ctx context.Context, r io.Reader, logger *slog.Logge
 										"port", backend.Port,
 										"matched", decision.Matched,
 										"route_index", decision.RouteIndex,
-										"data_len", len(referralData),
+										"content_len", len(referralContent),
 									)
 								}
 							}

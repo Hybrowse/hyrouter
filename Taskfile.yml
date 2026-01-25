@@ -79,8 +79,8 @@ tasks:
 
   docker:build:
     cmds:
-      - docker build -t hyrouter:test .
+      - docker build -t hyrouter:local .
 
   docker:run:
     cmds:
-      - docker run --rm -p 8080:8080 hyrouter:test
+      - docker run --rm -p 8080:8080 hyrouter:local

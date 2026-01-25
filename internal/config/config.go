@@ -17,9 +17,15 @@ type Config struct {
 	TLS       TLSConfig        `json:"tls" yaml:"tls"`
 	QUIC      QUICConfig       `json:"quic" yaml:"quic"`
 	Routing   routing.Config   `json:"routing" yaml:"routing"`
+	Referral  *ReferralConfig  `json:"referral" yaml:"referral"`
 	Plugins   []PluginConfig   `json:"plugins" yaml:"plugins"`
 	Discovery *DiscoveryConfig `json:"discovery" yaml:"discovery"`
 	Messages  MessagesConfig   `json:"messages" yaml:"messages"`
+}
+
+type ReferralConfig struct {
+	KeyID      uint8  `json:"key_id" yaml:"key_id"`
+	HMACSecret string `json:"hmac_secret" yaml:"hmac_secret"`
 }
 
 type MessagesConfig struct {
@@ -168,6 +174,10 @@ func (c *Config) Validate() error {
 	}
 	if err := c.Routing.Validate(); err != nil {
 		return err
+	}
+	if c.Referral != nil {
+		_ = c.Referral.KeyID
+		_ = c.Referral.HMACSecret
 	}
 	seen := map[string]struct{}{}
 	for i, p := range c.Plugins {

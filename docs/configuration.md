@@ -129,6 +129,31 @@ routing:
             port: 5520
 ```
 
+### `referral`
+
+Referral envelope configuration.
+
+Hyrouter always wraps plugin-provided referral content into a fixed, versioned envelope.
+
+Fields:
+
+- `key_id` (int): key identifier included in the envelope (0-255)
+- `hmac_secret` (string, optional): shared secret used to sign the envelope with HMAC-SHA256
+
+`hmac_secret` formats:
+
+- raw string (used as UTF-8 bytes)
+- `base64:<...>`
+- `hex:<...>`
+
+Example:
+
+```yaml
+referral:
+  key_id: 1
+  hmac_secret: "base64:REPLACE_ME_WITH_A_SECRET"
+```
+
 ### `discovery`
 
 Optional dynamic backend discovery.

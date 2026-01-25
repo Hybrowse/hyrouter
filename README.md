@@ -118,7 +118,7 @@ task run:plugins:debug
 Build:
 
 ```bash
-docker build -t hyrouter:test .
+docker build -t hyrouter:local .
 ```
 
 Run (mount your config):
@@ -127,7 +127,7 @@ Run (mount your config):
 docker run --rm \
   -p 5520:5520/udp \
   -v $(pwd)/config.yaml:/app/config.yaml \
-  hyrouter:test
+  hyrouter:local
 ```
 
 ## Configuration
