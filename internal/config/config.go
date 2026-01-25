@@ -310,6 +310,11 @@ type KubernetesMetadataConfig struct {
 	IncludeAnnotations []string `json:"include_annotations" yaml:"include_annotations"`
 }
 
+type AgonesAddressConfig struct {
+	Source     string   `json:"source" yaml:"source"`
+	Preference []string `json:"preference" yaml:"preference"`
+}
+
 type AgonesDiscoveryConfig struct {
 	Kubeconfig          string                   `json:"kubeconfig" yaml:"kubeconfig"`
 	Namespaces          []string                 `json:"namespaces" yaml:"namespaces"`
@@ -318,8 +323,7 @@ type AgonesDiscoveryConfig struct {
 	State               []string                 `json:"state" yaml:"state"`
 	Selector            *KubernetesSelector      `json:"selector" yaml:"selector"`
 	Metadata            KubernetesMetadataConfig `json:"metadata" yaml:"metadata"`
-	AddressSource       string                   `json:"address_source" yaml:"address_source"`
-	AddressPreference   []string                 `json:"address_preference" yaml:"address_preference"`
+	Address             *AgonesAddressConfig     `json:"address" yaml:"address"`
 	Port                KubernetesPortConfig     `json:"port" yaml:"port"`
 }
 
@@ -375,10 +379,12 @@ func (c *DiscoveryConfig) Validate() error {
 					}
 				}
 			}
-			addrSrc := strings.ToLower(strings.TrimSpace(p.Agones.AddressSource))
-			if addrSrc != "" {
-				if addrSrc != "address" && addrSrc != "addresses" {
-					return fmt.Errorf("discovery.providers[%d].agones.address_source must be one of: address, addresses", i)
+			if p.Agones.Address != nil {
+				addrSrc := strings.ToLower(strings.TrimSpace(p.Agones.Address.Source))
+				if addrSrc != "" {
+					if addrSrc != "address" && addrSrc != "addresses" {
+						return fmt.Errorf("discovery.providers[%d].agones.address.source must be one of: address, addresses", i)
+					}
 				}
 			}
 			if strings.TrimSpace(p.Agones.AllocateMinInterval) != "" {

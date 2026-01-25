@@ -339,9 +339,9 @@ func resolveAgonesAddress(status map[string]interface{}, cfg *config.AgonesDisco
 	addr, _, _ := unstructured.NestedString(status, "address")
 	addrSrc := ""
 	pref := []string(nil)
-	if cfg != nil {
-		addrSrc = strings.ToLower(strings.TrimSpace(cfg.AddressSource))
-		pref = cfg.AddressPreference
+	if cfg != nil && cfg.Address != nil {
+		addrSrc = strings.ToLower(strings.TrimSpace(cfg.Address.Source))
+		pref = cfg.Address.Preference
 	}
 	if addrSrc == "" {
 		if len(pref) == 0 {

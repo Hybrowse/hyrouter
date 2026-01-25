@@ -69,10 +69,11 @@ discovery:
           include_annotations:
             - agones.dev/sdk-game-start
             - agones.dev/sdk-whitelist-enabled
-        address_source: "addresses"
-        address_preference:
-          - ExternalIP
-          - PublicIP
+        address:
+          source: "addresses"
+          preference:
+            - ExternalIP
+            - PublicIP
         port:
           name: gameport
 

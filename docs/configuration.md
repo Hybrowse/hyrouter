@@ -305,8 +305,9 @@ discovery:
         metadata:
           include_labels: ["agones.dev/fleet", "hytale.hyvane.com/region", "hytale.hyvane.com/server-tag"]
           include_annotations: ["agones.dev/sdk-whitelist-enabled", "agones.dev/sdk-game-start"]
-        address_source: "addresses" # address|addresses
-        address_preference: ["ExternalIP", "PublicIP", "NodeExternalIP"]
+        address:
+          source: "addresses" # address|addresses
+          preference: ["ExternalIP", "PublicIP", "NodeExternalIP"]
         port:
           name: gameport
 ```
