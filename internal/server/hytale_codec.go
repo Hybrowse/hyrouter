@@ -44,23 +44,6 @@ func encodeDisconnectPayload(reason string) ([]byte, error) {
 	return payload.Bytes(), nil
 }
 
-func encodeConnectAcceptPayload(passwordChallenge []byte) ([]byte, error) {
-	var payload bytes.Buffer
-	if passwordChallenge == nil {
-		payload.WriteByte(0)
-		return payload.Bytes(), nil
-	}
-	if len(passwordChallenge) > 64 {
-		return nil, fmt.Errorf("password challenge too long")
-	}
-	payload.WriteByte(0x01)
-	if err := writeVarInt(&payload, len(passwordChallenge)); err != nil {
-		return nil, err
-	}
-	payload.Write(passwordChallenge)
-	return payload.Bytes(), nil
-}
-
 func encodeClientReferralPayload(host string, port uint16, data []byte) ([]byte, error) {
 	if host == "" {
 		return nil, fmt.Errorf("host must not be empty")
