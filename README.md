@@ -1,3 +1,6 @@
+[![Discord](https://img.shields.io/discord/1459154799407665397?label=Join%20Discord)](https://hybrowse.gg/discord)
+[![Docker Pulls](https://img.shields.io/docker/pulls/hybrowse/hyrouter)](https://hub.docker.com/r/hybrowse/hyrouter)
+
 # Hyrouter
 
 Hyrouter is a highly flexible, plugin-driven Layer 7 referral router and QUIC entrypoint for Hytale.
@@ -26,6 +29,10 @@ Hyrouter is part of the **Hybrowse Server Stack** — production-grade building 
 
 - **Image (Docker Hub)**: [`hybrowse/hyrouter`](https://hub.docker.com/r/hybrowse/hyrouter)
 - **Mirror (GHCR)**: [`ghcr.io/hybrowse/hyrouter`](https://ghcr.io/hybrowse/hyrouter)
+
+## Community
+
+Join the **Hybrowse Discord Server** to get help and stay up to date: https://hybrowse.gg/discord
 
 ## What you get
 
