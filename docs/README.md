@@ -2,6 +2,13 @@
 
 This folder contains the detailed documentation for Hyrouter.
 
+## Hybrowse Server Stack
+
+Hyrouter is part of the **Hybrowse Server Stack**:
+
+- [Hybrowse/hytale-server-docker](https://github.com/Hybrowse/hytale-server-docker) — Docker image for dedicated servers
+- [Hybrowse/hytale-session-token-broker](https://github.com/Hybrowse/hytale-session-token-broker) — non-interactive server authentication for providers/fleets
+
 ## Getting started
 
 - [`configuration.md`](configuration.md) – configuration file schema (YAML / JSON)

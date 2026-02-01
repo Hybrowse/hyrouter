@@ -11,6 +11,13 @@ It accepts an incoming QUIC connection from a Hytale client, inspects minimal me
 
 Hyrouter is **not** a reverse proxy and does **not** forward gameplay traffic.
 
+## Hybrowse Server Stack
+
+Hyrouter is part of the **Hybrowse Server Stack** — production-grade building blocks for running Hytale at scale:
+
+- [Hybrowse/hytale-server-docker](https://github.com/Hybrowse/hytale-server-docker) — hardened Docker image for dedicated servers (mods, auto-download, Kubernetes assets)
+- [Hybrowse/hytale-session-token-broker](https://github.com/Hybrowse/hytale-session-token-broker) — non-interactive server authentication for providers/fleets
+
 > [!IMPORTANT]
 > Due to a client-side bug, connection redirects via `ClientReferral` only work correctly starting with Hytale client version `pre-release/2026.01.29`.
 > We expect the next regular client release (Patch 3) to roll this fix out to all players.
