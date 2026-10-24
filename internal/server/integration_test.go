@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"math/big"
 	"net"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,6 +83,22 @@ func (h *captureHandler) waitUniAccepted(timeout time.Duration) error {
 }
 
 func TestEndToEndReferralRedirect(t *testing.T) {
+	testEndToEndReferralRedirect(t, buildConnectPayloadForTest(
+		"6708f121966c1c443f4b0eb525b2f81d0a8dc61f5003a692a8fa157e5e02cea9",
+		0,
+		"d3e6ef90-e113-49a7-a845-1c11f24fe166",
+		"de-DE",
+		"tok",
+		"Krymo",
+	))
+}
+
+func TestEndToEndReferralRedirectUpdate7(t *testing.T) {
+	testEndToEndReferralRedirect(t, buildConnectPayloadV2ForTest(strings.Repeat("a", 100)))
+}
+
+func testEndToEndReferralRedirect(t *testing.T, connectPayload []byte) {
+	t.Helper()
 	addr := reserveUDPAddr(t)
 
 	cfg := config.Default()
@@ -118,15 +135,6 @@ func TestEndToEndReferralRedirect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("OpenStreamSync: %v", err)
 	}
-
-	connectPayload := buildConnectPayloadForTest(
-		"6708f121966c1c443f4b0eb525b2f81d0a8dc61f5003a692a8fa157e5e02cea9",
-		0,
-		"d3e6ef90-e113-49a7-a845-1c11f24fe166",
-		"de-DE",
-		"tok",
-		"Krymo",
-	)
 
 	frame := make([]byte, 8+len(connectPayload))
 	binary.LittleEndian.PutUint32(frame[0:4], uint32(len(connectPayload)))

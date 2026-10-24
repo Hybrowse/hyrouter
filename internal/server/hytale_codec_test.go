@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"strings"
 	"testing"
 )
 
@@ -369,4 +370,45 @@ func fromHex(c byte) byte {
 	default:
 		return 0
 	}
+}
+
+func TestDecodeConnectPayloadUpdate7Language(t *testing.T) {
+	for _, language := range []string{"de-DE", strings.Repeat("a", 17), strings.Repeat("a", 100)} {
+		t.Run(language, func(t *testing.T) {
+			info, ok := decodeConnectPayload(buildConnectPayloadV2ForTest(language))
+			if !ok {
+				t.Fatal("Connect packet was rejected")
+			}
+			if info.language != language || info.username != "TestPlayer" || info.uuid != "d3e6ef90-e113-49a7-a845-1c11f24fe166" {
+				t.Fatalf("lost routing fields: %#v", info)
+			}
+			if info.protocolCrc != 0x12345678 || info.protocolBuildNumber != 7 || info.clientVersion != "0.7.3" || !info.identityTokenPresent {
+				t.Fatalf("incorrect Connect metadata: %#v", info)
+			}
+		})
+	}
+	if _, ok := decodeConnectPayloadV2(buildConnectPayloadV2ForTest(strings.Repeat("a", 101))); ok {
+		t.Fatal("V2 accepted a language longer than the protocol limit")
+	}
+}
+
+// Synthetic Connect fixture: no captured identity token or proprietary binary.
+func buildConnectPayloadV2ForTest(language string) []byte {
+	fixed := make([]byte, 66)
+	fixed[0] = 1 // identity token present
+	binary.LittleEndian.PutUint32(fixed[1:5], 0x12345678)
+	binary.LittleEndian.PutUint32(fixed[5:9], 7)
+	copy(fixed[9:29], "0.7.3")
+	copy(fixed[30:46], parseUUIDBytes("d3e6ef90-e113-49a7-a845-1c11f24fe166"))
+	var variable bytes.Buffer
+	for _, field := range []struct {
+		offset int
+		value  string
+	}{{46, "TestPlayer"}, {50, "synthetic-test-token"}, {54, language}} {
+		binary.LittleEndian.PutUint32(fixed[field.offset:field.offset+4], uint32(variable.Len()))
+		_ = writeVarString(&variable, field.value, 8192)
+	}
+	binary.LittleEndian.PutUint32(fixed[58:62], 0xffffffff)
+	binary.LittleEndian.PutUint32(fixed[62:66], 0xffffffff)
+	return append(fixed, variable.Bytes()...)
 }
