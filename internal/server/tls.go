@@ -1,13 +1,15 @@
 package server
 
 import (
-	"crypto/ed25519"
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"math/big"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -167,7 +169,7 @@ func (s *Server) loadCertificate() (tls.Certificate, error) {
 		return tls.LoadX509KeyPair(s.cfg.TLS.CertFile, s.cfg.TLS.KeyFile)
 	}
 
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		return tls.Certificate{}, err
 	}
@@ -175,6 +177,9 @@ func (s *Server) loadCertificate() (tls.Certificate, error) {
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(1),
 		DNSNames:     []string{"localhost"},
+		IPAddresses:  []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		NotBefore:    time.Now().Add(-1 * time.Hour),
 		NotAfter:     time.Now().Add(24 * time.Hour),
 	}

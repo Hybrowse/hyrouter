@@ -41,7 +41,7 @@ Fields:
 Notes:
 
 - `cert_file` and `key_file` must be set together.
-- If both are omitted, Hyrouter generates a short-lived self-signed certificate for development.
+- If both are omitted, Hyrouter generates a short-lived self-signed ECDSA P-256 certificate for development. This matches the signature schemes offered by the Hytale client.
 - Hyrouter requests (but does not require) a client certificate. If present, the certificate fingerprint is exposed to plugins.
 - Default: `hytale/*` (accept any `hytale/<n>` ALPN offered by the client).
 - To restrict to specific protocol versions, set `alpn` explicitly (for example `hytale/2`).
