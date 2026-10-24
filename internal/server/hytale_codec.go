@@ -8,9 +8,8 @@ import (
 )
 
 const (
-	maxHytalePayloadLen      = int32(1677721600)
-	maxDebugBufferedPayload  = int32(16 * 1024 * 1024)
-	maxDebugPayloadHexPrefix = 96
+	maxHytalePayloadLen     = int32(1677721600)
+	maxDebugBufferedPayload = int32(16 * 1024 * 1024)
 )
 
 func writeFramedPacket(w io.Writer, packetID int32, payload []byte) error {
