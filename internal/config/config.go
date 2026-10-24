@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/hybrowse/hyrouter/internal/routing"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v3"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
