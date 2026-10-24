@@ -55,6 +55,9 @@ Pool selection controls:
 ## Filters
 
 Filters are evaluated against backend metadata and the decoded `Connect` request.
+Client identity fields, including protocol 3 token claims, are unverified routing
+hints. A whitelist filter helps choose a backend; the backend must still authenticate
+the player and enforce its own access rules.
 
 ### `whitelist`
 

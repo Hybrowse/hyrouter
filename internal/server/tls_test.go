@@ -154,3 +154,29 @@ func TestLoadCertificateFromFilesError(t *testing.T) {
 		t.Fatalf("expected error")
 	}
 }
+
+// Signature schemes captured from the actual 0.7.4 client's ClientHello.
+// Its quiche transport does not advertise Ed25519 for TLS certificates.
+func TestDefaultCertificateSupportsHytaleClient(t *testing.T) {
+	s := &Server{cfg: config.Default()}
+	cert, err := s.loadCertificate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"localhost", "127.0.0.1", "::1"} {
+		hello := &tls.ClientHelloInfo{
+			ServerName:        name,
+			SupportedVersions: []uint16{tls.VersionTLS13},
+			CipherSuites:      []uint16{tls.TLS_AES_128_GCM_SHA256},
+			SupportedCurves:   []tls.CurveID{tls.X25519, tls.CurveP256},
+			SignatureSchemes: []tls.SignatureScheme{
+				tls.ECDSAWithP256AndSHA256, tls.PSSWithSHA256, tls.PKCS1WithSHA256,
+				tls.ECDSAWithP384AndSHA384, tls.PSSWithSHA384, tls.PKCS1WithSHA384,
+				tls.PSSWithSHA512, tls.PKCS1WithSHA512, tls.PKCS1WithSHA1,
+			},
+		}
+		if err := hello.SupportsCertificate(&cert); err != nil {
+			t.Errorf("Hytale client cannot use default certificate for %s: %v", name, err)
+		}
+	}
+}

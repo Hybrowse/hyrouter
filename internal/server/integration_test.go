@@ -97,13 +97,21 @@ func TestEndToEndReferralRedirectUpdate7(t *testing.T) {
 	testEndToEndReferralRedirect(t, buildConnectPayloadV2ForTest(strings.Repeat("a", 100)))
 }
 
-func testEndToEndReferralRedirect(t *testing.T, connectPayload []byte) {
+func TestEndToEndReferralRedirectProtocol3(t *testing.T) {
+	testEndToEndReferralRedirect(t, readProtocolFixture(t, "connect"), "hytale/3")
+}
+
+func testEndToEndReferralRedirect(t *testing.T, connectPayload []byte, protocols ...string) {
 	t.Helper()
 	addr := reserveUDPAddr(t)
 
 	cfg := config.Default()
 	cfg.Listen = addr
 	cfg.Routing.Default = &routing.Pool{Strategy: "round_robin", Backends: []routing.Backend{{Host: "play.hyvane.com", Port: 5520}}}
+	if len(protocols) > 0 && protocols[0] == "hytale/3" {
+		cfg.Routing.Default.Filters = []routing.Filter{{Type: "whitelist", Subject: "uuid", EnabledKey: "enabled", ListKey: "players"}}
+		cfg.Routing.Default.Backends[0].Meta = map[string]string{"enabled": "true", "players": "00112233-4455-6677-8899-aabbccddeeff"}
+	}
 
 	h := newCaptureHandler()
 	logger := slog.New(h)
@@ -116,7 +124,7 @@ func testEndToEndReferralRedirect(t *testing.T, connectPayload []byte) {
 		_ = srv.Run(ctx)
 	}()
 
-	conn := dialQUIC(t, addr)
+	conn := dialQUIC(t, addr, protocols...)
 	defer conn.CloseWithError(0, "done") // nolint:errcheck
 
 	uni, err := conn.OpenUniStreamSync(ctx)
@@ -254,17 +262,20 @@ func makeClientCertificate(t *testing.T) tls.Certificate {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: priv}
 }
 
-func dialQUIC(t *testing.T, addr string) *quic.Conn {
+func dialQUIC(t *testing.T, addr string, protocols ...string) *quic.Conn {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	clientCert := makeClientCertificate(t)
+	if len(protocols) == 0 {
+		protocols = []string{"hytale/1"}
+	}
 
 	tlsConf := &tls.Config{
 		InsecureSkipVerify: true,
-		NextProtos:         []string{"hytale/1"},
+		NextProtos:         protocols,
 		ServerName:         "localhost",
 		Certificates:       []tls.Certificate{clientCert},
 	}

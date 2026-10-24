@@ -23,7 +23,7 @@ Hyrouter is **not** a reverse proxy and does **not** forward gameplay traffic.
 
 ## Connection flow
 
-1. Client connects via QUIC and negotiates ALPN (configured via `tls.alpn`; typically `hytale/2`).
+1. Client connects via QUIC and negotiates ALPN (configured via `tls.alpn`; `hytale/3` for Hytale 0.7.4).
 2. Hyrouter obtains TLS metadata:
    - remote address
    - SNI (hostname)
@@ -33,7 +33,11 @@ Hyrouter is **not** a reverse proxy and does **not** forward gameplay traffic.
 4. Hyrouter accepts a bidirectional QUIC stream and reads Hytale framed packets.
    - Framing: `uint32le payloadLen` + `uint32le packetID` + `payload`
 5. When the first `Connect` packet (packet ID `0`) is decoded:
-   - Hyrouter extracts identity fields (username, uuid, language, ...).
+   - Hyrouter decodes the layout selected by ALPN. Protocol 3 has no standalone
+     UUID or username; these routing hints come from the identity-token claims.
+   - Hyrouter does not authenticate those claims. Backends must authenticate players
+     and enforce access control. The same applies to the client-supplied identity
+     fields in older protocol versions.
    - Hyrouter calls plugins (if configured).
 6. Result:
    - If any plugin denies: Hyrouter sends `Disconnect` (packet ID `1`) and closes the stream.
