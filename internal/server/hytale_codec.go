@@ -285,7 +285,8 @@ func decodeConnectPayloadV2(payload []byte) (connectPayloadInfo, bool) {
 	if languageOffset < 0 {
 		return connectPayloadInfo{}, false
 	}
-	if s, _, ok := readVarString(payload, 66+languageOffset, 16); ok {
+	// Update 7 widened Connect.Language to 100 characters. Culture names are ASCII.
+	if s, _, ok := readVarString(payload, 66+languageOffset, 100); ok {
 		info.language = s
 	} else {
 		return connectPayloadInfo{}, false

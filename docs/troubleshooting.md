@@ -49,3 +49,14 @@ Recommended pattern:
 
 - Mount your config into the container.
 - Or bake a config into the image by editing the Dockerfile.
+
+## Hytale Update 7
+
+Update 7 widened `Connect.Language` to 100 characters. Hyrouter accepts this
+field when choosing routes and calling plugins, while retaining support for the
+older hash-based Connect format. The regression tests use synthetic packets and
+exercise the referral over a local QUIC connection.
+
+The [official Update 7 notes](https://hytale.com/news/2026/10/modder-facing-patch-notes-update-7)
+explain the protocol change. These checks do not replace joining through Hyrouter
+with the matching Hytale client and server build.
