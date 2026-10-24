@@ -111,7 +111,6 @@ func (s *Server) dumpFrames(ctx context.Context, conn *quic.Conn, r io.Reader, l
 
 				payload := pending[8:frameLen]
 				sum := sha256.Sum256(payload)
-				prefixLen := minInt(len(payload), maxDebugPayloadHexPrefix)
 
 				logger.Debug(
 					"rx packet",
@@ -119,7 +118,6 @@ func (s *Server) dumpFrames(ctx context.Context, conn *quic.Conn, r io.Reader, l
 					"packet_name", packetName(packetID),
 					"payload_len", payloadLen,
 					"payload_sha256", hex.EncodeToString(sum[:]),
-					"payload_prefix_hex", hex.EncodeToString(payload[:prefixLen]),
 				)
 				if !loggedFirstPacket {
 					loggedFirstPacket = true

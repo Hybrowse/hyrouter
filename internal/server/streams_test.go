@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/hybrowse/hyrouter/internal/config"
@@ -421,5 +423,27 @@ func TestDumpFrames_RoutingErrorUsesTemplate(t *testing.T) {
 	}
 	if p[0] != 0x01 {
 		t.Fatalf("nullbits=%02x", p[0])
+	}
+}
+
+func TestDebugLogsDoNotExposePacketContents(t *testing.T) {
+	secret := "private-identity-token"
+	var frame bytes.Buffer
+	if err := writeFramedPacket(&frame, 99, []byte(secret)); err != nil {
+		t.Fatal(err)
+	}
+	rx := &rw{r: bytes.NewReader(frame.Bytes())}
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	s := &Server{logger: logger}
+	s.dumpFrames(context.Background(), nil, rx, logger, routing.Decision{}, nil, plugins.ConnectEvent{})
+	output := logs.String()
+	for _, leaked := range []string{secret, hex.EncodeToString([]byte(secret)), "payload_prefix_hex"} {
+		if strings.Contains(output, leaked) {
+			t.Fatal("debug log contains packet contents")
+		}
+	}
+	if !strings.Contains(output, "payload_sha256=") {
+		t.Fatal("packet diagnostics missing")
 	}
 }
