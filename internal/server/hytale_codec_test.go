@@ -3,6 +3,9 @@ package server
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -411,4 +414,85 @@ func buildConnectPayloadV2ForTest(language string) []byte {
 	binary.LittleEndian.PutUint32(fixed[58:62], 0xffffffff)
 	binary.LittleEndian.PutUint32(fixed[62:66], 0xffffffff)
 	return append(fixed, variable.Bytes()...)
+}
+
+func readProtocolFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	data, err := os.ReadFile("testdata/hytale-0.7.4-" + name + ".hex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := hex.DecodeString(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
+
+func TestConnectProtocol3FromServerSerializer(t *testing.T) {
+	payload := readProtocolFixture(t, "connect")
+	info, ok := decodeConnectPayloadForProtocol(payload, "hytale/3")
+	if !ok {
+		t.Fatal("rejected a packet from the server serializer")
+	}
+	if info.protocolCrc != -386561135 || info.protocolBuildNumber != 258 || info.clientVersion != "0.7.4" || info.clientType != 0 {
+		t.Fatalf("incorrect version fields: %#v", info)
+	}
+	if info.uuid != "00112233-4455-6677-8899-aabbccddeeff" || info.username != "TestPlayer" || info.language != "de-DE" || !info.identityTokenPresent {
+		t.Fatalf("incorrect routing hints: %#v", info)
+	}
+	if info.referralDataLen != 3 || info.referralSource == nil || info.referralSource.Host != "localhost" || info.referralSource.Port != 5520 {
+		t.Fatalf("incorrect referral: %#v", info)
+	}
+	for _, slot := range []int{30, 34, 38, 42} {
+		t.Run(fmt.Sprint(slot), func(t *testing.T) {
+			bad := bytes.Clone(payload)
+			binary.LittleEndian.PutUint32(bad[slot:slot+4], 0x7fffffff)
+			if _, ok := decodeConnectPayloadForProtocol(bad, "hytale/3"); ok {
+				t.Fatal("accepted an invalid offset")
+			}
+		})
+	}
+	if _, ok := decodeConnectPayloadForProtocol(payload[:len(payload)-1], "hytale/3"); ok {
+		t.Fatal("accepted truncated referral source")
+	}
+}
+
+func TestProtocol3LanguageLimit(t *testing.T) {
+	original := readProtocolFixture(t, "connect")
+	start := 46 + int(binary.LittleEndian.Uint32(original[34:38]))
+	for _, length := range []int{17, 100, 101} {
+		payload := append(bytes.Clone(original[:start]), byte(length))
+		payload = append(payload, strings.Repeat("a", length)...)
+		payload = append(payload, original[start+6:]...)
+		for _, slot := range []int{38, 42} {
+			binary.LittleEndian.PutUint32(payload[slot:slot+4], binary.LittleEndian.Uint32(original[slot:slot+4])+uint32(length-5))
+		}
+		info, ok := decodeConnectPayloadForProtocol(payload, "hytale/3")
+		if ok != (length <= 100) {
+			t.Fatalf("length %d: accepted=%t", length, ok)
+		}
+		if ok && len(info.language) != length {
+			t.Fatal("lost language")
+		}
+	}
+}
+
+func TestReferralProtocol3MatchesServerSerializer(t *testing.T) {
+	want := readProtocolFixture(t, "referral")
+	got, err := encodeClientReferralPayload("127.0.0.1", 15520, []byte{1, 2, 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("referral differs from server serializer: got %x want %x", got, want)
+	}
+}
+
+func TestUnverifiedIdentityClaimsRejectMalformedHints(t *testing.T) {
+	for _, token := range []string{"", "not-a-token", "a.%%%.b", "a.e30.b", "a.bnVsbA.b"} {
+		if uuid, username := unverifiedIdentityClaims(token); uuid != "" || username != "" {
+			t.Fatal("accepted malformed identity claims")
+		}
+	}
 }

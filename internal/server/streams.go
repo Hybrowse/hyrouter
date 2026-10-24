@@ -127,7 +127,11 @@ func (s *Server) dumpFrames(ctx context.Context, conn *quic.Conn, r io.Reader, l
 				}
 
 				if packetID == 0 {
-					if info, ok := decodeConnectPayload(payload); ok {
+					protocol := ""
+					if conn != nil {
+						protocol = conn.ConnectionState().TLS.NegotiatedProtocol
+					}
+					if info, ok := decodeConnectPayloadForProtocol(payload, protocol); ok {
 						if s.router != nil {
 							d, err := s.router.Decide(ctx, routing.Request{SNI: baseEvent.SNI, UUID: info.uuid, Username: info.username, Language: info.language})
 							if err == nil {

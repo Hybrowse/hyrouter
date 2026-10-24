@@ -60,3 +60,14 @@ exercise the referral over a local QUIC connection.
 The [official Update 7 notes](https://hytale.com/news/2026/10/modder-facing-patch-notes-update-7)
 explain the protocol change. These checks do not replace joining through Hyrouter
 with the matching Hytale client and server build.
+
+## Hytale 0.7.4 (protocol 3)
+
+The connection packet no longer includes separate UUID and username fields.
+Hyrouter uses the negotiated `hytale/3` ALPN to decode the new layout and takes
+identity routing hints from the token's `sub` and `username` claims. Malformed
+protocol 3 packets are not reinterpreted as older layouts.
+
+The compatibility fixtures in `internal/server/testdata` were produced with the
+0.7.4 server serializer using invented test data. Both the new Connect layout and
+the outgoing referral are checked. Backend authentication remains required.

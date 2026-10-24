@@ -2,9 +2,13 @@ package server
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 )
 
 const (
@@ -162,6 +166,110 @@ func decodeConnectPayload(payload []byte) (connectPayloadInfo, bool) {
 		return info, true
 	}
 	return decodeConnectPayloadV1(payload)
+}
+
+// ALPN identifies protocol 3 unambiguously: its Connect packet no longer has
+// standalone UUID and username fields. Do not interpret it as a legacy packet.
+func decodeConnectPayloadForProtocol(payload []byte, protocol string) (connectPayloadInfo, bool) {
+	if protocol == "hytale/3" {
+		return decodeConnectPayloadV3(payload)
+	}
+	return decodeConnectPayload(payload)
+}
+
+func decodeConnectPayloadV3(payload []byte) (connectPayloadInfo, bool) {
+	const variableStart = 46
+	if len(payload) < variableStart || payload[0]&^byte(7) != 0 || payload[29] > 1 {
+		return connectPayloadInfo{}, false
+	}
+	info := connectPayloadInfo{
+		protocolCrc:         int32(binary.LittleEndian.Uint32(payload[1:5])),
+		protocolBuildNumber: int32(binary.LittleEndian.Uint32(payload[5:9])),
+		clientVersion:       readFixedASCII(payload, 9, 20),
+		clientType:          payload[29],
+	}
+	info.protocolHash = info.clientVersion
+	offset := func(slot int) int { return int(int32(binary.LittleEndian.Uint32(payload[slot : slot+4]))) }
+	languageOffset := offset(34)
+	if languageOffset < 0 {
+		return connectPayloadInfo{}, false
+	}
+	language, _, ok := readVarString(payload, variableStart+languageOffset, 100)
+	if !ok {
+		return connectPayloadInfo{}, false
+	}
+	for _, c := range []byte(language) {
+		if c > 127 {
+			return connectPayloadInfo{}, false
+		}
+	}
+	info.language = language
+	if payload[0]&1 != 0 {
+		identityOffset := offset(30)
+		if identityOffset < 0 {
+			return connectPayloadInfo{}, false
+		}
+		token, _, ok := readVarString(payload, variableStart+identityOffset, 8192)
+		if !ok {
+			return connectPayloadInfo{}, false
+		}
+		info.identityTokenPresent = true
+		info.uuid, info.username = unverifiedIdentityClaims(token)
+	}
+	if payload[0]&2 != 0 {
+		dataOffset := offset(38)
+		if dataOffset < 0 {
+			return connectPayloadInfo{}, false
+		}
+		pos := variableStart + dataOffset
+		length, size, ok := readVarInt(payload, pos)
+		if !ok || length < 0 || length > 4096 || pos+size+length > len(payload) {
+			return connectPayloadInfo{}, false
+		}
+		info.referralDataLen = length
+	}
+	if payload[0]&4 != 0 {
+		sourceOffset := offset(42)
+		if sourceOffset < 0 {
+			return connectPayloadInfo{}, false
+		}
+		source, _, ok := decodeHostAddress(payload, variableStart+sourceOffset)
+		if !ok {
+			return connectPayloadInfo{}, false
+		}
+		info.referralSource = &source
+	}
+	return info, true
+}
+
+// These claims are routing hints, like the client-supplied identity in older
+// packets. Authentication and access control remain the backend's responsibility.
+func unverifiedIdentityClaims(token string) (string, string) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return "", ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", ""
+	}
+	var claims struct {
+		Subject  string `json:"sub"`
+		Username string `json:"username"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || len(claims.Subject) != 36 || len(claims.Username) > 16 {
+		return "", ""
+	}
+	for _, pos := range []int{8, 13, 18, 23} {
+		if claims.Subject[pos] != '-' {
+			return "", ""
+		}
+	}
+	b, err := hex.DecodeString(strings.ReplaceAll(claims.Subject, "-", ""))
+	if err != nil || len(b) != 16 {
+		return "", ""
+	}
+	return strings.ToLower(claims.Subject), claims.Username
 }
 
 func looksLikeHexFixedASCII(b []byte, start int, length int) bool {
