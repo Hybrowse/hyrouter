@@ -7,9 +7,9 @@ require (
 	github.com/tetratelabs/wazero v1.12.0
 	go.yaml.in/yaml/v3 v3.0.5
 	google.golang.org/grpc v1.84.0
-	k8s.io/api v0.37.1
-	k8s.io/apimachinery v0.37.1
-	k8s.io/client-go v0.37.1
+	k8s.io/api v0.37.2
+	k8s.io/apimachinery v0.37.2
+	k8s.io/client-go v0.37.2
 )
 
 require (
